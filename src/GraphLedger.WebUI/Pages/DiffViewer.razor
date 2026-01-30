@@ -1,0 +1,133 @@
+@page "/diff"
+@inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
+@inject IDiffEngine DiffEngine
+@inject NavigationManager Navigation
+
+<PageTitle>Diff Viewer - GraphLedger</PageTitle>
+
+<h1>Diff Viewer</h1>
+
+<div class="row mb-4">
+    <div class="col-md-5">
+        <label for="leftSnapshot" class="form-label">Left Snapshot (Older)</label>
+        <select class="form-select" id="leftSnapshot" @bind="_leftSnapshotId">
+            <option value="">Select snapshot...</option>
+            @foreach (var snapshot in _snapshots)
+            {
+                <option value="@snapshot.Id">
+                    @snapshot.Id.ToString()[..8] - @snapshot.Workload (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
+                </option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2 d-flex align-items-end justify-content-center">
+        <span class="text-muted h3">vs</span>
+    </div>
+    <div class="col-md-5">
+        <label for="rightSnapshot" class="form-label">Right Snapshot (Newer)</label>
+        <select class="form-select" id="rightSnapshot" @bind="_rightSnapshotId">
+            <option value="">Select snapshot...</option>
+            @foreach (var snapshot in _snapshots)
+            {
+                <option value="@snapshot.Id">
+                    @snapshot.Id.ToString()[..8] - @snapshot.Workload (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
+                </option>
+            }
+        </select>
+    </div>
+</div>
+
+<div class="mb-4">
+    <button class="btn btn-primary" @onclick="ComparSnapshots" disabled="@(!CanCompare)">
+        Compare Snapshots
+    </button>
+</div>
+
+@if (_comparing)
+{
+    <p><em>Comparing...</em></p>
+}
+else if (_diffResult != null)
+{
+    <div class="card mb-4">
+        <div class="card-header">
+            <strong>Comparison Result</strong>
+            @if (_diffResult.HasChanges)
+            {
+                <span class="badge bg-warning ms-2">@_diffResult.ChangeCount change(s)</span>
+            }
+            else
+            {
+                <span class="badge bg-success ms-2">No changes</span>
+            }
+        </div>
+        <div class="card-body">
+            @if (!_diffResult.HasChanges)
+            {
+                <p class="text-success">The two snapshots are identical.</p>
+            }
+            else
+            {
+                <DiffViewerComponent Result="_diffResult" />
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<Snapshot> _snapshots = new();
+    private string _leftSnapshotId = "";
+    private string _rightSnapshotId = "";
+    private bool _comparing;
+    private DiffResult? _diffResult;
+
+    private bool CanCompare => !string.IsNullOrEmpty(_leftSnapshotId) &&
+                               !string.IsNullOrEmpty(_rightSnapshotId) &&
+                               _leftSnapshotId != _rightSnapshotId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var context = await ContextFactory.CreateDbContextAsync();
+        _snapshots = await context.Snapshots
+            .OrderByDescending(s => s.CreatedAt)
+            .Take(100)
+            .ToListAsync();
+
+        // Check for query parameters
+        var uri = new Uri(Navigation.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+        if (query["left"] != null)
+        {
+            _leftSnapshotId = query["left"]!;
+        }
+        if (query["right"] != null)
+        {
+            _rightSnapshotId = query["right"]!;
+        }
+    }
+
+    private async Task ComparSnapshots()
+    {
+        if (!CanCompare) return;
+
+        _comparing = true;
+        _diffResult = null;
+
+        try
+        {
+            await using var context = await ContextFactory.CreateDbContextAsync();
+
+            var leftSnapshot = await context.Snapshots.FindAsync(Guid.Parse(_leftSnapshotId));
+            var rightSnapshot = await context.Snapshots.FindAsync(Guid.Parse(_rightSnapshotId));
+
+            if (leftSnapshot != null && rightSnapshot != null)
+            {
+                _diffResult = DiffEngine.Compare(leftSnapshot, rightSnapshot);
+            }
+        }
+        finally
+        {
+            _comparing = false;
+        }
+    }
+}

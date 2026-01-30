@@ -1,0 +1,43 @@
+@using GraphLedger.Core.Models
+
+<div class="card snapshot-card">
+    <div class="card-body">
+        <h5 class="card-title">
+            <code>@Snapshot.Id.ToString()[..8]</code>
+            <span class="badge @GetSourceBadgeClass() float-end">@Snapshot.Source</span>
+        </h5>
+        <h6 class="card-subtitle mb-2 text-muted">@Snapshot.Workload</h6>
+        <p class="card-text">
+            <small class="text-muted">
+                Created: @Snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC
+            </small>
+        </p>
+        @if (!string.IsNullOrEmpty(Snapshot.Description))
+        {
+            <p class="card-text">@Snapshot.Description</p>
+        }
+        <div class="d-flex gap-2">
+            <a href="snapshots/@Snapshot.Id" class="btn btn-sm btn-outline-primary">View Details</a>
+            @if (ShowCompareButton)
+            {
+                <a href="diff?left=@Snapshot.Id" class="btn btn-sm btn-outline-secondary">Compare</a>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired]
+    public Snapshot Snapshot { get; set; } = default!;
+
+    [Parameter]
+    public bool ShowCompareButton { get; set; } = true;
+
+    private string GetSourceBadgeClass() => Snapshot.Source switch
+    {
+        SnapshotSource.Manual => "bg-primary",
+        SnapshotSource.Scheduled => "bg-info",
+        SnapshotSource.Webhook => "bg-warning text-dark",
+        _ => "bg-secondary"
+    };
+}

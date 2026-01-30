@@ -1,0 +1,169 @@
+@page "/snapshots"
+@page "/snapshots/{SnapshotId}"
+@inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
+
+<PageTitle>Snapshots - GraphLedger</PageTitle>
+
+<h1>Snapshots</h1>
+
+@if (_loading)
+{
+    <p><em>Loading...</em></p>
+}
+else if (_selectedSnapshot != null)
+{
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="snapshots">Snapshots</a></li>
+            <li class="breadcrumb-item active">@_selectedSnapshot.Id.ToString()[..8]</li>
+        </ol>
+    </nav>
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <strong>Snapshot Details</strong>
+        </div>
+        <div class="card-body">
+            <dl class="row">
+                <dt class="col-sm-2">ID</dt>
+                <dd class="col-sm-10"><code>@_selectedSnapshot.Id</code></dd>
+
+                <dt class="col-sm-2">Tenant ID</dt>
+                <dd class="col-sm-10">@_selectedSnapshot.TenantId</dd>
+
+                <dt class="col-sm-2">Workload</dt>
+                <dd class="col-sm-10">@_selectedSnapshot.Workload</dd>
+
+                <dt class="col-sm-2">Created At</dt>
+                <dd class="col-sm-10">@_selectedSnapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</dd>
+
+                <dt class="col-sm-2">Source</dt>
+                <dd class="col-sm-10">@_selectedSnapshot.Source</dd>
+
+                @if (!string.IsNullOrEmpty(_selectedSnapshot.Description))
+                {
+                    <dt class="col-sm-2">Description</dt>
+                    <dd class="col-sm-10">@_selectedSnapshot.Description</dd>
+                }
+            </dl>
+        </div>
+    </div>
+
+    <h3>Configuration</h3>
+    <pre class="bg-light p-3" style="max-height: 500px; overflow: auto;">@FormatJson(_selectedSnapshot.ConfigurationJson)</pre>
+}
+else
+{
+    <div class="mb-3">
+        <label for="workloadFilter" class="form-label">Filter by Workload</label>
+        <select class="form-select" id="workloadFilter" @onchange="OnWorkloadFilterChanged" style="max-width: 300px;">
+            <option value="">All Workloads</option>
+            @foreach (var workload in _workloads)
+            {
+                <option value="@workload">@workload</option>
+            }
+        </select>
+    </div>
+
+    @if (_snapshots.Count == 0)
+    {
+        <p>No snapshots found.</p>
+    }
+    else
+    {
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Workload</th>
+                    <th>Created At</th>
+                    <th>Source</th>
+                    <th>Size</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var snapshot in _snapshots)
+                {
+                    <tr>
+                        <td><code>@snapshot.Id.ToString()[..8]</code></td>
+                        <td>@snapshot.Workload</td>
+                        <td>@snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                        <td>@snapshot.Source</td>
+                        <td>@snapshot.ConfigurationJson.Length.ToString("N0") bytes</td>
+                        <td>
+                            <a href="snapshots/@snapshot.Id" class="btn btn-sm btn-outline-primary">View</a>
+                            <a href="diff?left=@snapshot.Id" class="btn btn-sm btn-outline-secondary">Compare</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    [Parameter]
+    public string? SnapshotId { get; set; }
+
+    private bool _loading = true;
+    private List<Snapshot> _snapshots = new();
+    private List<string> _workloads = new();
+    private Snapshot? _selectedSnapshot;
+    private string _selectedWorkload = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        await LoadData();
+        _loading = false;
+    }
+
+    private async Task LoadData()
+    {
+        await using var context = await ContextFactory.CreateDbContextAsync();
+
+        if (!string.IsNullOrEmpty(SnapshotId) && Guid.TryParse(SnapshotId, out var id))
+        {
+            _selectedSnapshot = await context.Snapshots.FirstOrDefaultAsync(s => s.Id == id);
+        }
+        else
+        {
+            _selectedSnapshot = null;
+            _workloads = await context.Snapshots.Select(s => s.Workload).Distinct().ToListAsync();
+
+            var query = context.Snapshots.AsQueryable();
+            if (!string.IsNullOrEmpty(_selectedWorkload))
+            {
+                query = query.Where(s => s.Workload == _selectedWorkload);
+            }
+
+            _snapshots = await query
+                .OrderByDescending(s => s.CreatedAt)
+                .Take(100)
+                .ToListAsync();
+        }
+    }
+
+    private async Task OnWorkloadFilterChanged(ChangeEventArgs e)
+    {
+        _selectedWorkload = e.Value?.ToString() ?? "";
+        await LoadData();
+    }
+
+    private static string FormatJson(string json)
+    {
+        try
+        {
+            var doc = System.Text.Json.JsonDocument.Parse(json);
+            return System.Text.Json.JsonSerializer.Serialize(doc, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+        }
+        catch
+        {
+            return json;
+        }
+    }
+}

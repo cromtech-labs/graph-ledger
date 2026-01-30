@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  graphledger:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: graphledger
+    ports:
+      - "8080:8080"
+    volumes:
+      - graphledger-data:/app/data
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - GraphLedger__Azure__TenantId=${AZURE_TENANT_ID:-}
+      - GraphLedger__Azure__ClientId=${AZURE_CLIENT_ID:-}
+      - GraphLedger__Azure__ClientSecret=${AZURE_CLIENT_SECRET:-}
+      - GraphLedger__Storage__DatabasePath=/app/data/graphledger.db
+      - GraphLedger__Scheduling__Enabled=true
+      - GraphLedger__Scheduling__CronExpression=0 0 * * * ?
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Optional: Run just the background service
+  graphledger-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: graphledger-service
+    profiles:
+      - service-only
+    volumes:
+      - graphledger-data:/app/data
+    environment:
+      - GraphLedger__Azure__TenantId=${AZURE_TENANT_ID:-}
+      - GraphLedger__Azure__ClientId=${AZURE_CLIENT_ID:-}
+      - GraphLedger__Azure__ClientSecret=${AZURE_CLIENT_SECRET:-}
+      - GraphLedger__Storage__DatabasePath=/app/data/graphledger.db
+      - GraphLedger__Scheduling__Enabled=true
+      - GraphLedger__Scheduling__CronExpression=0 0 * * * ?
+    working_dir: /app/service
+    entrypoint: ["dotnet", "GraphLedger.Service.dll"]
+    restart: unless-stopped
+
+volumes:
+  graphledger-data:
+    driver: local

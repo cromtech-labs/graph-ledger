@@ -1,0 +1,101 @@
+@page "/"
+@inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
+
+<PageTitle>Dashboard - GraphLedger</PageTitle>
+
+<h1>Dashboard</h1>
+
+@if (_loading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Total Snapshots</h5>
+                    <p class="card-text display-4">@_totalSnapshots</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Workloads Tracked</h5>
+                    <p class="card-text display-4">@_workloadCount</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Recent Drifts</h5>
+                    <p class="card-text display-4">@_recentDrifts</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2>Recent Snapshots</h2>
+    @if (_recentSnapshots.Count == 0)
+    {
+        <p>No snapshots found. Use the CLI to take your first snapshot.</p>
+        <pre>graphledger snapshot take</pre>
+    }
+    else
+    {
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Workload</th>
+                    <th>Created At</th>
+                    <th>Source</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var snapshot in _recentSnapshots)
+                {
+                    <tr>
+                        <td><code>@snapshot.Id.ToString()[..8]</code></td>
+                        <td>@snapshot.Workload</td>
+                        <td>@snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
+                        <td>@snapshot.Source</td>
+                        <td>
+                            <a href="snapshots/@snapshot.Id" class="btn btn-sm btn-outline-primary">View</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private int _totalSnapshots;
+    private int _workloadCount;
+    private int _recentDrifts;
+    private List<Snapshot> _recentSnapshots = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var context = await ContextFactory.CreateDbContextAsync();
+
+        _totalSnapshots = await context.Snapshots.CountAsync();
+        _workloadCount = await context.Snapshots.Select(s => s.Workload).Distinct().CountAsync();
+        _recentDrifts = await context.DriftRecords
+            .Where(d => d.DetectedAt > DateTime.UtcNow.AddDays(-7))
+            .CountAsync();
+
+        _recentSnapshots = await context.Snapshots
+            .OrderByDescending(s => s.CreatedAt)
+            .Take(10)
+            .ToListAsync();
+
+        _loading = false;
+    }
+}

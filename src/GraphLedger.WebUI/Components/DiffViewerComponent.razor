@@ -1,0 +1,95 @@
+@using GraphLedger.Core.Diff
+
+<div class="diff-viewer">
+    @if (Result == null || !Result.HasChanges)
+    {
+        <p class="text-muted">No changes to display.</p>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th style="width: 100px;">Operation</th>
+                        <th>Path</th>
+                        <th>Old Value</th>
+                        <th>New Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var change in Result.Changes)
+                    {
+                        <tr class="@GetRowClass(change.Operation)">
+                            <td>
+                                <span class="badge @GetBadgeClass(change.Operation)">
+                                    @GetOperationLabel(change.Operation)
+                                </span>
+                            </td>
+                            <td><code>@change.Path</code></td>
+                            <td>
+                                @if (change.Operation != DiffOperation.Add)
+                                {
+                                    <pre class="mb-0 small">@FormatValue(change.OldValue)</pre>
+                                }
+                            </td>
+                            <td>
+                                @if (change.Operation != DiffOperation.Remove)
+                                {
+                                    <pre class="mb-0 small">@FormatValue(change.NewValue)</pre>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (ShowRawDiff && !string.IsNullOrEmpty(Result.RawDiffJson))
+        {
+            <div class="mt-4">
+                <h5>Raw Diff JSON</h5>
+                <pre class="bg-light p-3" style="max-height: 300px; overflow: auto;">@Result.RawDiffJson</pre>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public DiffResult? Result { get; set; }
+
+    [Parameter]
+    public bool ShowRawDiff { get; set; }
+
+    private static string GetRowClass(DiffOperation operation) => operation switch
+    {
+        DiffOperation.Add => "table-success",
+        DiffOperation.Remove => "table-danger",
+        DiffOperation.Replace => "table-warning",
+        _ => ""
+    };
+
+    private static string GetBadgeClass(DiffOperation operation) => operation switch
+    {
+        DiffOperation.Add => "bg-success",
+        DiffOperation.Remove => "bg-danger",
+        DiffOperation.Replace => "bg-warning text-dark",
+        _ => "bg-secondary"
+    };
+
+    private static string GetOperationLabel(DiffOperation operation) => operation switch
+    {
+        DiffOperation.Add => "Added",
+        DiffOperation.Remove => "Removed",
+        DiffOperation.Replace => "Changed",
+        _ => "Unknown"
+    };
+
+    private static string FormatValue(object? value)
+    {
+        if (value == null) return "(null)";
+        var str = value.ToString() ?? "";
+        return str.Length > 200 ? str[..200] + "..." : str;
+    }
+}
