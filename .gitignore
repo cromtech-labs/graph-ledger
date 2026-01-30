@@ -55,3 +55,7 @@ nunit-*.xml
 
 claude
 claude/*
+
+*.db
+*.db-shm
+*.db-wal
