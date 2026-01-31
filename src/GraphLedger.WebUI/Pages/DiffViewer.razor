@@ -1,4 +1,5 @@
 @page "/diff"
+@rendermode InteractiveServer
 @inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
 @inject IDiffEngine DiffEngine
 @inject NavigationManager Navigation
@@ -10,12 +11,12 @@
 <div class="row mb-4">
     <div class="col-md-5">
         <label for="leftSnapshot" class="form-label">Left Snapshot (Older)</label>
-        <select class="form-select" id="leftSnapshot" @bind="_leftSnapshotId">
+        <select class="form-select" id="leftSnapshot" value="@_leftSnapshotId" @onchange="OnLeftSnapshotChanged">
             <option value="">Select snapshot...</option>
             @foreach (var snapshot in _snapshots)
             {
-                <option value="@snapshot.Id">
-                    @snapshot.Id.ToString()[..8] - @snapshot.Workload (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
+                <option value="@snapshot.Id.ToString()">
+                    @snapshot.Id.ToString()[..8] - @(!string.IsNullOrEmpty(snapshot.ResourceDisplayName) ? snapshot.ResourceDisplayName : snapshot.Workload) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
                 </option>
             }
         </select>
@@ -25,12 +26,12 @@
     </div>
     <div class="col-md-5">
         <label for="rightSnapshot" class="form-label">Right Snapshot (Newer)</label>
-        <select class="form-select" id="rightSnapshot" @bind="_rightSnapshotId">
+        <select class="form-select" id="rightSnapshot" value="@_rightSnapshotId" @onchange="OnRightSnapshotChanged">
             <option value="">Select snapshot...</option>
             @foreach (var snapshot in _snapshots)
             {
-                <option value="@snapshot.Id">
-                    @snapshot.Id.ToString()[..8] - @snapshot.Workload (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
+                <option value="@snapshot.Id.ToString()">
+                    @snapshot.Id.ToString()[..8] - @(!string.IsNullOrEmpty(snapshot.ResourceDisplayName) ? snapshot.ResourceDisplayName : snapshot.Workload) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
                 </option>
             }
         </select>
@@ -38,14 +39,22 @@
 </div>
 
 <div class="mb-4">
-    <button class="btn btn-primary" @onclick="ComparSnapshots" disabled="@(!CanCompare)">
-        Compare Snapshots
+    <button class="btn btn-primary" @onclick="CompareSnapshots" disabled="@(!CanCompare || _comparing)">
+        @if (_comparing)
+        {
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            <text>Comparing...</text>
+        }
+        else
+        {
+            <text>Compare Snapshots</text>
+        }
     </button>
 </div>
 
-@if (_comparing)
+@if (!string.IsNullOrEmpty(_errorMessage))
 {
-    <p><em>Comparing...</em></p>
+    <div class="alert alert-danger">@_errorMessage</div>
 }
 else if (_diffResult != null)
 {
@@ -80,6 +89,7 @@ else if (_diffResult != null)
     private string _rightSnapshotId = "";
     private bool _comparing;
     private DiffResult? _diffResult;
+    private string? _errorMessage;
 
     private bool CanCompare => !string.IsNullOrEmpty(_leftSnapshotId) &&
                                !string.IsNullOrEmpty(_rightSnapshotId) &&
@@ -106,28 +116,68 @@ else if (_diffResult != null)
         }
     }
 
-    private async Task ComparSnapshots()
+    private void OnLeftSnapshotChanged(ChangeEventArgs e)
+    {
+        _leftSnapshotId = e.Value?.ToString() ?? "";
+        _diffResult = null;
+        _errorMessage = null;
+    }
+
+    private void OnRightSnapshotChanged(ChangeEventArgs e)
+    {
+        _rightSnapshotId = e.Value?.ToString() ?? "";
+        _diffResult = null;
+        _errorMessage = null;
+    }
+
+    private async Task CompareSnapshots()
     {
         if (!CanCompare) return;
 
         _comparing = true;
         _diffResult = null;
+        _errorMessage = null;
+        StateHasChanged();
 
         try
         {
             await using var context = await ContextFactory.CreateDbContextAsync();
 
-            var leftSnapshot = await context.Snapshots.FindAsync(Guid.Parse(_leftSnapshotId));
-            var rightSnapshot = await context.Snapshots.FindAsync(Guid.Parse(_rightSnapshotId));
-
-            if (leftSnapshot != null && rightSnapshot != null)
+            if (!Guid.TryParse(_leftSnapshotId, out var leftId))
             {
-                _diffResult = DiffEngine.Compare(leftSnapshot, rightSnapshot);
+                _errorMessage = $"Invalid left snapshot ID: {_leftSnapshotId}";
+                return;
             }
+            if (!Guid.TryParse(_rightSnapshotId, out var rightId))
+            {
+                _errorMessage = $"Invalid right snapshot ID: {_rightSnapshotId}";
+                return;
+            }
+
+            var leftSnapshot = await context.Snapshots.FindAsync(leftId);
+            var rightSnapshot = await context.Snapshots.FindAsync(rightId);
+
+            if (leftSnapshot == null)
+            {
+                _errorMessage = "Left snapshot not found";
+                return;
+            }
+            if (rightSnapshot == null)
+            {
+                _errorMessage = "Right snapshot not found";
+                return;
+            }
+
+            _diffResult = DiffEngine.Compare(leftSnapshot, rightSnapshot);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Error comparing snapshots: {ex.Message}";
         }
         finally
         {
             _comparing = false;
+            StateHasChanged();
         }
     }
 }
