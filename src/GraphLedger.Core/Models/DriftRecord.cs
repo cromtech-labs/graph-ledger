@@ -27,6 +27,21 @@ public class DriftRecord
     public DateTime? AcknowledgedAt { get; set; }
 
     public string? AcknowledgedBy { get; set; }
+
+    /// <summary>
+    /// UTCM drift ID if this was detected by UTCM server-side drift detection.
+    /// </summary>
+    public string? UtcmDriftId { get; set; }
+
+    /// <summary>
+    /// UTCM monitor ID that detected this drift.
+    /// </summary>
+    public string? UtcmMonitorId { get; set; }
+
+    /// <summary>
+    /// UTCM resource type (e.g., "microsoft.entra.conditionalAccessPolicy").
+    /// </summary>
+    public string? ResourceType { get; set; }
 }
 
 public enum DriftSeverity

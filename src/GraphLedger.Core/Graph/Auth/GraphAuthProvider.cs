@@ -1,3 +1,4 @@
+using Azure.Core;
 using Azure.Identity;
 using GraphLedger.Core.Models;
 using Microsoft.Graph.Beta;
@@ -13,35 +14,38 @@ public class GraphAuthProvider
         _settings = settings;
     }
 
-    public GraphServiceClient CreateClient()
+    /// <summary>
+    /// Creates a TokenCredential for obtaining access tokens.
+    /// </summary>
+    public TokenCredential CreateCredential()
     {
         if (!string.IsNullOrEmpty(_settings.ClientSecret))
         {
-            var clientSecretCredential = new ClientSecretCredential(
+            return new ClientSecretCredential(
                 _settings.TenantId,
                 _settings.ClientId,
                 _settings.ClientSecret);
-
-            return new GraphServiceClient(clientSecretCredential, _settings.Scopes);
         }
 
         if (!string.IsNullOrEmpty(_settings.CertificateThumbprint))
         {
             var certificate = LoadCertificateByThumbprint(_settings.CertificateThumbprint);
-            var clientCertificateCredential = new ClientCertificateCredential(
+            return new ClientCertificateCredential(
                 _settings.TenantId,
                 _settings.ClientId,
                 certificate);
-
-            return new GraphServiceClient(clientCertificateCredential, _settings.Scopes);
         }
 
-        var defaultCredential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+        return new DefaultAzureCredential(new DefaultAzureCredentialOptions
         {
             TenantId = _settings.TenantId
         });
+    }
 
-        return new GraphServiceClient(defaultCredential, _settings.Scopes);
+    public GraphServiceClient CreateClient()
+    {
+        var credential = CreateCredential();
+        return new GraphServiceClient(credential, _settings.Scopes);
     }
 
     private static System.Security.Cryptography.X509Certificates.X509Certificate2 LoadCertificateByThumbprint(string thumbprint)

@@ -5,6 +5,7 @@ using GraphLedger.Core.Diff;
 using GraphLedger.Core.Graph;
 using GraphLedger.Core.Graph.Auth;
 using GraphLedger.Core.Models;
+using GraphLedger.Core.Models.Utcm;
 using GraphLedger.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -28,18 +29,31 @@ public static class SnapshotCommands
     private static Command CreateTakeCommand()
     {
         var workloadsOption = new Option<string[]>(
-            aliases: new[] { "--workloads", "-w" },
-            description: "Workloads to snapshot (comma-separated)")
+            aliases: ["--workloads", "-w"],
+            description: "UTCM workloads to snapshot (e.g., Entra, Exchange, Intune, Teams, Security)")
         {
             AllowMultipleArgumentsPerToken = true
         };
 
-        var takeCommand = new Command("take", "Take a new configuration snapshot")
+        var resourceTypesOption = new Option<string[]>(
+            aliases: ["--resource-types", "-r"],
+            description: "Specific UTCM resource types to snapshot (overrides --workloads)")
         {
-            workloadsOption
+            AllowMultipleArgumentsPerToken = true
         };
 
-        takeCommand.SetHandler(async (workloads) =>
+        var descriptionOption = new Option<string?>(
+            aliases: ["--description", "-d"],
+            description: "Description for this snapshot");
+
+        var takeCommand = new Command("take", "Take a new configuration snapshot using UTCM API")
+        {
+            workloadsOption,
+            resourceTypesOption,
+            descriptionOption
+        };
+
+        takeCommand.SetHandler(async (workloads, resourceTypes, description) =>
         {
             try
             {
@@ -55,29 +69,97 @@ public static class SnapshotCommands
                 var authProvider = new GraphAuthProvider(config.Azure);
                 var utcmClient = new UtcmClient(authProvider, config.Azure.TenantId);
 
-                var targetWorkloads = workloads.Length > 0
-                    ? workloads
-                    : config.EnabledWorkloads.ToArray();
+                // Determine resource types to snapshot
+                IReadOnlyList<string> targetResourceTypes;
+                if (resourceTypes.Length > 0)
+                {
+                    // Validate resource types
+                    var invalidTypes = resourceTypes.Where(rt => !UtcmResourceTypeRegistry.IsValidResourceType(rt)).ToList();
+                    if (invalidTypes.Count > 0)
+                    {
+                        TableFormatter.WriteError($"Invalid resource types: {string.Join(", ", invalidTypes)}");
+                        TableFormatter.WriteInfo("Use 'graphledger workload resources <workload>' to see valid resource types.");
+                        return;
+                    }
+                    targetResourceTypes = resourceTypes;
+                }
+                else if (workloads.Length > 0)
+                {
+                    // Validate workloads
+                    var invalidWorkloads = workloads.Where(w => !UtcmResourceTypeRegistry.IsValidWorkload(w)).ToList();
+                    if (invalidWorkloads.Count > 0)
+                    {
+                        TableFormatter.WriteError($"Invalid workloads: {string.Join(", ", invalidWorkloads)}");
+                        TableFormatter.WriteInfo($"Valid workloads: {string.Join(", ", UtcmResourceTypeRegistry.GetWorkloads())}");
+                        return;
+                    }
+                    targetResourceTypes = UtcmResourceTypeRegistry.GetResourceTypesForWorkloads(workloads);
+                }
+                else
+                {
+                    // Default: use Entra workload
+                    targetResourceTypes = UtcmResourceTypeRegistry.GetResourceTypes("Entra");
+                }
 
-                TableFormatter.WriteInfo($"Taking snapshots for workloads: {string.Join(", ", targetWorkloads)}");
+                var displayName = description ?? $"Snapshot_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
+
+                TableFormatter.WriteInfo($"Creating UTCM snapshot with {targetResourceTypes.Count} resource types...");
+
+                // Create snapshot job
+                var job = await utcmClient.CreateSnapshotAsync(displayName, targetResourceTypes);
+                TableFormatter.WriteInfo($"Snapshot job created: {job.Id}");
+                TableFormatter.WriteInfo("Waiting for snapshot to complete...");
+
+                // Wait for completion
+                var completedJob = await utcmClient.WaitForSnapshotAsync(job.Id);
+
+                if (completedJob.Status == UtcmJobStatus.Failed)
+                {
+                    TableFormatter.WriteError($"Snapshot failed: {completedJob.ErrorMessage}");
+                    return;
+                }
 
                 using var context = CreateDbContext(config);
                 await context.Database.EnsureCreatedAsync();
                 var repository = new SnapshotRepository(context);
 
-                var snapshots = await utcmClient.TakeAllSnapshotsAsync(targetWorkloads);
-
-                foreach (var snapshot in snapshots)
+                // Store each resource as a separate snapshot
+                if (completedJob.SnapshotData != null && completedJob.SnapshotData.Count > 0)
                 {
-                    await repository.CreateAsync(snapshot);
-                    TableFormatter.WriteSuccess($"Snapshot taken for {snapshot.Workload}: {snapshot.Id}");
+                    foreach (var resource in completedJob.SnapshotData)
+                    {
+                        var workload = UtcmResourceTypeRegistry.GetWorkloadForResourceType(resource.ResourceType) ?? "Unknown";
+                        var snapshot = new Snapshot
+                        {
+                            TenantId = config.Azure.TenantId,
+                            Workload = workload,
+                            ConfigurationJson = JsonSerializer.Serialize(resource.Properties, new JsonSerializerOptions
+                            {
+                                WriteIndented = true
+                            }),
+                            Source = SnapshotSource.Manual,
+                            Description = description,
+                            UtcmJobId = completedJob.Id,
+                            UtcmResourceType = resource.ResourceType,
+                            ResourceDisplayName = resource.DisplayName
+                        };
+
+                        await repository.CreateAsync(snapshot);
+                        TableFormatter.WriteSuccess($"Saved {UtcmResourceTypeRegistry.GetFriendlyName(resource.ResourceType)}: {resource.DisplayName}");
+                    }
+
+                    TableFormatter.WriteSuccess($"Snapshot complete. Saved {completedJob.SnapshotData.Count} resources.");
+                }
+                else
+                {
+                    TableFormatter.WriteWarning("Snapshot completed but no resources were returned.");
                 }
             }
             catch (Exception ex)
             {
                 TableFormatter.WriteError($"Failed to take snapshot: {ex.Message}");
             }
-        }, workloadsOption);
+        }, workloadsOption, resourceTypesOption, descriptionOption);
 
         return takeCommand;
     }
@@ -85,21 +167,26 @@ public static class SnapshotCommands
     private static Command CreateListCommand()
     {
         var limitOption = new Option<int>(
-            aliases: new[] { "--limit", "-n" },
+            aliases: ["--limit", "-n"],
             getDefaultValue: () => 20,
             description: "Maximum number of snapshots to display");
 
         var workloadOption = new Option<string?>(
-            aliases: new[] { "--workload", "-w" },
+            aliases: ["--workload", "-w"],
             description: "Filter by workload");
+
+        var resourceTypeOption = new Option<string?>(
+            aliases: ["--resource-type", "-r"],
+            description: "Filter by UTCM resource type");
 
         var listCommand = new Command("list", "List configuration snapshots")
         {
             limitOption,
-            workloadOption
+            workloadOption,
+            resourceTypeOption
         };
 
-        listCommand.SetHandler(async (limit, workload) =>
+        listCommand.SetHandler(async (limit, workload, resourceType) =>
         {
             try
             {
@@ -114,9 +201,24 @@ public static class SnapshotCommands
 
                 var repository = new SnapshotRepository(context);
 
-                var snapshots = string.IsNullOrEmpty(workload)
-                    ? await repository.GetAllAsync(limit)
-                    : await repository.GetByWorkloadAsync(workload, limit);
+                IReadOnlyList<Snapshot> snapshots;
+                if (!string.IsNullOrEmpty(resourceType))
+                {
+                    // Filter by resource type
+                    var allSnapshots = await repository.GetAllAsync(limit * 10);
+                    snapshots = allSnapshots
+                        .Where(s => string.Equals(s.UtcmResourceType, resourceType, StringComparison.OrdinalIgnoreCase))
+                        .Take(limit)
+                        .ToList();
+                }
+                else if (!string.IsNullOrEmpty(workload))
+                {
+                    snapshots = await repository.GetByWorkloadAsync(workload, limit);
+                }
+                else
+                {
+                    snapshots = await repository.GetAllAsync(limit);
+                }
 
                 if (snapshots.Count == 0)
                 {
@@ -127,16 +229,19 @@ public static class SnapshotCommands
                 TableFormatter.WriteTable(snapshots,
                     ("ID", s => s.Id.ToString()[..8]),
                     ("Workload", s => s.Workload),
-                    ("Created At", s => s.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")),
-                    ("Source", s => s.Source.ToString()),
-                    ("Size", s => $"{s.ConfigurationJson.Length:N0} bytes")
+                    ("Resource Type", s => s.UtcmResourceType != null
+                        ? UtcmResourceTypeRegistry.GetFriendlyName(s.UtcmResourceType)
+                        : "-"),
+                    ("Display Name", s => TruncateString(s.ResourceDisplayName ?? "-", 25)),
+                    ("Created At", s => s.CreatedAt.ToString("yyyy-MM-dd HH:mm")),
+                    ("Size", s => $"{s.ConfigurationJson.Length:N0}b")
                 );
             }
             catch (Exception ex)
             {
                 TableFormatter.WriteError($"Failed to list snapshots: {ex.Message}");
             }
-        }, limitOption, workloadOption);
+        }, limitOption, workloadOption, resourceTypeOption);
 
         return listCommand;
     }
@@ -147,7 +252,7 @@ public static class SnapshotCommands
         var id2Argument = new Argument<string>("id2", "Second snapshot ID");
 
         var jsonOption = new Option<bool>(
-            aliases: new[] { "--json", "-j" },
+            aliases: ["--json", "-j"],
             description: "Output raw JSON diff");
 
         var diffCommand = new Command("diff", "Compare two snapshots")
@@ -232,7 +337,7 @@ public static class SnapshotCommands
     {
         var idArgument = new Argument<string>("id", "Snapshot ID");
         var outputOption = new Option<string>(
-            aliases: new[] { "--output", "-o" },
+            aliases: ["--output", "-o"],
             description: "Output file path")
         { IsRequired = true };
 
@@ -263,9 +368,12 @@ public static class SnapshotCommands
                     snapshot.Id,
                     snapshot.TenantId,
                     snapshot.Workload,
+                    snapshot.UtcmResourceType,
+                    snapshot.ResourceDisplayName,
                     snapshot.CreatedAt,
                     snapshot.Source,
                     snapshot.Description,
+                    snapshot.UtcmJobId,
                     Configuration = JsonSerializer.Deserialize<JsonElement>(snapshot.ConfigurationJson)
                 };
 
@@ -317,14 +425,27 @@ public static class SnapshotCommands
                     return;
                 }
 
-                Console.WriteLine($"Snapshot: {snapshot.Id}");
-                Console.WriteLine($"Tenant:   {snapshot.TenantId}");
-                Console.WriteLine($"Workload: {snapshot.Workload}");
-                Console.WriteLine($"Created:  {snapshot.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
-                Console.WriteLine($"Source:   {snapshot.Source}");
+                Console.WriteLine($"Snapshot:      {snapshot.Id}");
+                Console.WriteLine($"Tenant:        {snapshot.TenantId}");
+                Console.WriteLine($"Workload:      {snapshot.Workload}");
+                if (!string.IsNullOrEmpty(snapshot.UtcmResourceType))
+                {
+                    Console.WriteLine($"Resource Type: {UtcmResourceTypeRegistry.GetFriendlyName(snapshot.UtcmResourceType)}");
+                    Console.WriteLine($"               ({snapshot.UtcmResourceType})");
+                }
+                if (!string.IsNullOrEmpty(snapshot.ResourceDisplayName))
+                {
+                    Console.WriteLine($"Display Name:  {snapshot.ResourceDisplayName}");
+                }
+                Console.WriteLine($"Created:       {snapshot.CreatedAt:yyyy-MM-dd HH:mm:ss} UTC");
+                Console.WriteLine($"Source:        {snapshot.Source}");
+                if (!string.IsNullOrEmpty(snapshot.UtcmJobId))
+                {
+                    Console.WriteLine($"UTCM Job ID:   {snapshot.UtcmJobId}");
+                }
                 if (!string.IsNullOrEmpty(snapshot.Description))
                 {
-                    Console.WriteLine($"Description: {snapshot.Description}");
+                    Console.WriteLine($"Description:   {snapshot.Description}");
                 }
                 Console.WriteLine();
                 Console.WriteLine("Configuration:");
@@ -337,6 +458,12 @@ public static class SnapshotCommands
         }, idArgument);
 
         return showCommand;
+    }
+
+    private static string TruncateString(string value, int maxLength)
+    {
+        if (value.Length <= maxLength) return value;
+        return value[..(maxLength - 3)] + "...";
     }
 
     private static async Task<Snapshot?> FindSnapshotByPartialId(ISnapshotRepository repository, string partialId)

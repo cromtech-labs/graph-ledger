@@ -10,9 +10,8 @@ public class AppConfiguration
 
     public List<string> EnabledWorkloads { get; set; } = new()
     {
-        "deviceManagement",
-        "conditionalAccess",
-        "identityGovernance"
+        "Entra",
+        "Intune"
     };
 }
 

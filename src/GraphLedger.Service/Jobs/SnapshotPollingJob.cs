@@ -1,7 +1,9 @@
+using System.Text.Json;
 using GraphLedger.Core.Diff;
 using GraphLedger.Core.Graph;
 using GraphLedger.Core.Graph.Auth;
 using GraphLedger.Core.Models;
+using GraphLedger.Core.Models.Utcm;
 using GraphLedger.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -49,7 +51,13 @@ public class SnapshotPollingJob : IJob
             await using var dbContext = await _contextFactory.CreateDbContextAsync(context.CancellationToken);
             var snapshotRepository = new SnapshotRepository(dbContext);
 
-            foreach (var workload in config.EnabledWorkloads)
+            // Filter to valid UTCM workloads
+            var utcmWorkloads = config.EnabledWorkloads
+                .Where(UtcmResourceTypeRegistry.IsValidWorkload)
+                .DefaultIfEmpty("Entra")
+                .ToList();
+
+            foreach (var workload in utcmWorkloads)
             {
                 try
                 {
@@ -99,42 +107,96 @@ public class SnapshotPollingJob : IJob
     {
         _logger.LogDebug("Processing workload: {Workload}", workload);
 
-        var newSnapshot = await utcmClient.TakeSnapshotAsync(workload, cancellationToken);
-        newSnapshot.Source = SnapshotSource.Scheduled;
-
-        var previousSnapshot = await snapshotRepository.GetLatestByWorkloadAsync(workload, cancellationToken);
-
-        if (previousSnapshot != null)
+        var resourceTypes = UtcmResourceTypeRegistry.GetResourceTypes(workload);
+        if (resourceTypes.Count == 0)
         {
-            var diffResult = diffEngine.Compare(previousSnapshot, newSnapshot);
-
-            if (diffResult.HasChanges)
-            {
-                _logger.LogInformation(
-                    "Drift detected in {Workload}: {ChangeCount} change(s)",
-                    workload,
-                    diffResult.ChangeCount);
-
-                var driftRecord = new DriftRecord
-                {
-                    SnapshotId = newSnapshot.Id,
-                    BaselineSnapshotId = previousSnapshot.Id,
-                    Workload = workload,
-                    DiffJson = diffResult.RawDiffJson ?? "{}",
-                    ChangeCount = diffResult.ChangeCount,
-                    Severity = DetermineSeverity(diffResult)
-                };
-
-                dbContext.DriftRecords.Add(driftRecord);
-            }
-            else
-            {
-                _logger.LogDebug("No changes detected in {Workload}", workload);
-            }
+            _logger.LogWarning("No resource types found for workload {Workload}", workload);
+            return;
         }
 
-        await snapshotRepository.CreateAsync(newSnapshot, cancellationToken);
-        _logger.LogDebug("Snapshot saved for {Workload}: {SnapshotId}", workload, newSnapshot.Id);
+        var displayName = $"Scheduled_{workload}_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
+
+        // Create and wait for UTCM snapshot job
+        _logger.LogDebug("Creating UTCM snapshot job for {Workload}", workload);
+        var job = await utcmClient.CreateSnapshotAsync(displayName, resourceTypes, cancellationToken);
+
+        _logger.LogDebug("Waiting for snapshot job {JobId}", job.Id);
+        var completedJob = await utcmClient.WaitForSnapshotAsync(job.Id, TimeSpan.FromMinutes(5), cancellationToken);
+
+        if (completedJob.Status == UtcmJobStatus.Failed)
+        {
+            _logger.LogError("Snapshot job failed for {Workload}: {Error}", workload, completedJob.ErrorMessage);
+            return;
+        }
+
+        if (completedJob.SnapshotData == null || completedJob.SnapshotData.Count == 0)
+        {
+            _logger.LogWarning("No resources returned for workload {Workload}", workload);
+            return;
+        }
+
+        // Process each resource in the snapshot
+        foreach (var resource in completedJob.SnapshotData)
+        {
+            var newSnapshot = new Snapshot
+            {
+                TenantId = tenantId,
+                Workload = workload,
+                ConfigurationJson = JsonSerializer.Serialize(resource.Properties, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                }),
+                Source = SnapshotSource.Scheduled,
+                UtcmJobId = completedJob.Id,
+                UtcmResourceType = resource.ResourceType,
+                ResourceDisplayName = resource.DisplayName
+            };
+
+            // Find previous snapshot for this specific resource type
+            var allPreviousSnapshots = await snapshotRepository.GetByWorkloadAsync(workload, 100, cancellationToken);
+            var previousSnapshot = allPreviousSnapshots
+                .FirstOrDefault(s => s.UtcmResourceType == resource.ResourceType
+                                    && s.ResourceDisplayName == resource.DisplayName);
+
+            if (previousSnapshot != null)
+            {
+                var diffResult = diffEngine.Compare(previousSnapshot, newSnapshot);
+
+                if (diffResult.HasChanges)
+                {
+                    _logger.LogInformation(
+                        "Drift detected in {Workload}/{ResourceType}/{ResourceName}: {ChangeCount} change(s)",
+                        workload,
+                        resource.ResourceType,
+                        resource.DisplayName,
+                        diffResult.ChangeCount);
+
+                    var driftRecord = new DriftRecord
+                    {
+                        SnapshotId = newSnapshot.Id,
+                        BaselineSnapshotId = previousSnapshot.Id,
+                        Workload = workload,
+                        DiffJson = diffResult.RawDiffJson ?? "{}",
+                        ChangeCount = diffResult.ChangeCount,
+                        Severity = DetermineSeverity(diffResult),
+                        ResourceType = resource.ResourceType
+                    };
+
+                    dbContext.DriftRecords.Add(driftRecord);
+                }
+                else
+                {
+                    _logger.LogDebug("No changes detected in {Workload}/{ResourceType}/{ResourceName}",
+                        workload, resource.ResourceType, resource.DisplayName);
+                }
+            }
+
+            await snapshotRepository.CreateAsync(newSnapshot, cancellationToken);
+            _logger.LogDebug("Snapshot saved for {Workload}/{ResourceType}: {SnapshotId}",
+                workload, resource.ResourceType, newSnapshot.Id);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     private static DriftSeverity DetermineSeverity(DiffResult diffResult)
