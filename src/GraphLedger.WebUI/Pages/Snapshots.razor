@@ -38,20 +38,36 @@ else if (_selectedSnapshot != null)
                 @if (!string.IsNullOrEmpty(_selectedSnapshot.UtcmResourceType))
                 {
                     <dt class="col-sm-2">Resource Type</dt>
-                    <dd class="col-sm-10"><code>@_selectedSnapshot.UtcmResourceType</code></dd>
+                    <dd class="col-sm-10">@GetFriendlyTypeName(_selectedSnapshot.UtcmResourceType)</dd>
                 }
 
                 @if (!string.IsNullOrEmpty(_selectedSnapshot.ResourceDisplayName))
                 {
                     <dt class="col-sm-2">Resource Name</dt>
-                    <dd class="col-sm-10"><strong>@_selectedSnapshot.ResourceDisplayName</strong></dd>
+                    <dd class="col-sm-10"><strong>@CleanDisplayName(_selectedSnapshot.ResourceDisplayName, _selectedSnapshot.UtcmResourceType)</strong></dd>
                 }
 
                 <dt class="col-sm-2">Created At</dt>
-                <dd class="col-sm-10">@_selectedSnapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</dd>
+                <dd class="col-sm-10">@_selectedSnapshot.CreatedAt.ToString("G") (UTC)</dd>
 
                 <dt class="col-sm-2">Source</dt>
                 <dd class="col-sm-10">@_selectedSnapshot.Source</dd>
+
+                <dt class="col-sm-2">Status</dt>
+                <dd class="col-sm-10">
+                    @if (_selectedSnapshot.HasChangesFromPrevious == true)
+                    {
+                        <span class="badge bg-warning text-dark">Changed</span>
+                    }
+                    else if (_selectedSnapshot.HasChangesFromPrevious == false)
+                    {
+                        <span class="text-muted">No changes from previous</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-info">Initial snapshot</span>
+                    }
+                </dd>
 
                 @if (!string.IsNullOrEmpty(_selectedSnapshot.UtcmJobId))
                 {
@@ -65,6 +81,11 @@ else if (_selectedSnapshot != null)
                     <dd class="col-sm-10">@_selectedSnapshot.Description</dd>
                 }
             </dl>
+
+            @if (_selectedSnapshot.ResourceId.HasValue)
+            {
+                <a href="resources/@_selectedSnapshot.ResourceId" class="btn btn-outline-secondary">View Resource History</a>
+            }
         </div>
     </div>
 
@@ -73,61 +94,96 @@ else if (_selectedSnapshot != null)
 }
 else
 {
-    <div class="mb-3">
-        <label for="workloadFilter" class="form-label">Filter by Workload</label>
-        <select class="form-select" id="workloadFilter" @onchange="OnWorkloadFilterChanged" style="max-width: 300px;">
-            <option value="">All Workloads</option>
-            @foreach (var workload in _workloads)
-            {
-                <option value="@workload">@workload</option>
-            }
-        </select>
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label for="workloadFilter" class="form-label">Workload</label>
+            <select class="form-select" id="workloadFilter" @onchange="OnWorkloadFilterChanged">
+                <option value="">All Workloads</option>
+                @foreach (var workload in _workloads)
+                {
+                    <option value="@workload" selected="@(_selectedWorkload == workload)">@workload</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-4">
+            <label for="typeFilter" class="form-label">Resource Type</label>
+            <select class="form-select" id="typeFilter" @onchange="OnTypeFilterChanged" disabled="@string.IsNullOrEmpty(_selectedWorkload)">
+                <option value="">All Types</option>
+                @foreach (var type in _resourceTypes)
+                {
+                    <option value="@type" selected="@(_selectedType == type)">@GetFriendlyTypeName(type)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="statusFilter" class="form-label">Status</label>
+            <select class="form-select" id="statusFilter" @onchange="OnStatusFilterChanged">
+                <option value="" selected="@(_statusFilter == "")">All</option>
+                <option value="changed" selected="@(_statusFilter == "changed")">Changed only</option>
+                <option value="initial" selected="@(_statusFilter == "initial")">Initial only</option>
+            </select>
+        </div>
     </div>
 
     @if (_snapshots.Count == 0)
     {
-        <p>No snapshots found.</p>
+        <div class="alert alert-info">
+            No snapshots found.
+            @if (!string.IsNullOrEmpty(_selectedWorkload) || !string.IsNullOrEmpty(_selectedType))
+            {
+                <text> Try adjusting your filters.</text>
+            }
+        </div>
     }
     else
     {
-        <table class="table table-striped">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Resource</th>
-                    <th>Workload</th>
-                    <th>Created At</th>
-                    <th>Size</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var snapshot in _snapshots)
+        <p class="text-muted">Showing @_snapshots.Count snapshots</p>
+
+        <QuickGrid Items="@_snapshots.AsQueryable()" Class="table table-striped table-hover">
+            <TemplateColumn Title="ID">
+                <a href="snapshots/@context.Id"><code>@context.Id.ToString()[..8]</code></a>
+            </TemplateColumn>
+            <TemplateColumn Title="Workload" SortBy="@(GridSort<Snapshot>.ByAscending(s => s.Workload))">
+                <span class="badge bg-secondary">@context.Workload</span>
+            </TemplateColumn>
+            <TemplateColumn Title="Type" SortBy="@(GridSort<Snapshot>.ByAscending(s => s.UtcmResourceType))">
+                <small>@GetFriendlyTypeName(context.UtcmResourceType ?? "")</small>
+            </TemplateColumn>
+            <TemplateColumn Title="Resource" SortBy="@(GridSort<Snapshot>.ByAscending(s => CleanDisplayName(s.ResourceDisplayName ?? "", s.UtcmResourceType)))">
+                @if (!string.IsNullOrEmpty(context.ResourceDisplayName))
                 {
-                    <tr>
-                        <td><code>@snapshot.Id.ToString()[..8]</code></td>
-                        <td>
-                            @if (!string.IsNullOrEmpty(snapshot.ResourceDisplayName))
-                            {
-                                <strong>@TruncateString(snapshot.ResourceDisplayName, 40)</strong>
-                                <br/><small class="text-muted">@snapshot.UtcmResourceType</small>
-                            }
-                            else
-                            {
-                                <span class="text-muted">-</span>
-                            }
-                        </td>
-                        <td><span class="badge bg-secondary">@snapshot.Workload</span></td>
-                        <td>@snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
-                        <td>@snapshot.ConfigurationJson.Length.ToString("N0") bytes</td>
-                        <td>
-                            <a href="snapshots/@snapshot.Id" class="btn btn-sm btn-outline-primary">View</a>
-                            <a href="diff?left=@snapshot.Id" class="btn btn-sm btn-outline-secondary">Compare</a>
-                        </td>
-                    </tr>
+                    <strong>@CleanDisplayName(context.ResourceDisplayName, context.UtcmResourceType)</strong>
                 }
-            </tbody>
-        </table>
+                else
+                {
+                    <span class="text-muted">-</span>
+                }
+            </TemplateColumn>
+            <TemplateColumn Title="Status" SortBy="@(GridSort<Snapshot>.ByDescending(s => s.HasChangesFromPrevious))">
+                @if (context.HasChangesFromPrevious == true)
+                {
+                    <span class="badge bg-warning text-dark">Changed</span>
+                }
+                else if (context.HasChangesFromPrevious == false)
+                {
+                    <span class="text-muted small">-</span>
+                }
+                else
+                {
+                    <span class="badge bg-info">Initial</span>
+                }
+            </TemplateColumn>
+            <TemplateColumn Title="Created At" SortBy="@(GridSort<Snapshot>.ByDescending(s => s.CreatedAt))">
+                <small>@context.CreatedAt.ToString("g")</small>
+            </TemplateColumn>
+            <TemplateColumn Title="Actions">
+                <a href="snapshots/@context.Id" class="btn btn-sm btn-outline-primary">View</a>
+                @if (context.ResourceId.HasValue)
+                {
+                    <a href="resources/@context.ResourceId" class="btn btn-sm btn-outline-secondary">History</a>
+                }
+            </TemplateColumn>
+        </QuickGrid>
     }
 }
 
@@ -138,8 +194,11 @@ else
     private bool _loading = true;
     private List<Snapshot> _snapshots = new();
     private List<string> _workloads = new();
+    private List<string> _resourceTypes = new();
     private Snapshot? _selectedSnapshot;
     private string _selectedWorkload = "";
+    private string _selectedType = "";
+    private string _statusFilter = "";
 
     protected override async Task OnParametersSetAsync()
     {
@@ -159,13 +218,42 @@ else
         else
         {
             _selectedSnapshot = null;
-            _workloads = await context.Snapshots.Select(s => s.Workload).Distinct().ToListAsync();
 
-            var query = context.Snapshots.AsQueryable();
+            // Load workloads
+            _workloads = await context.Snapshots
+                .Select(s => s.Workload)
+                .Distinct()
+                .OrderBy(w => w)
+                .ToListAsync();
+
+            // Load resource types for selected workload
             if (!string.IsNullOrEmpty(_selectedWorkload))
             {
-                query = query.Where(s => s.Workload == _selectedWorkload);
+                _resourceTypes = await context.Snapshots
+                    .Where(s => s.Workload == _selectedWorkload && s.UtcmResourceType != null)
+                    .Select(s => s.UtcmResourceType!)
+                    .Distinct()
+                    .OrderBy(t => t)
+                    .ToListAsync();
             }
+            else
+            {
+                _resourceTypes = new();
+            }
+
+            // Build query
+            var query = context.Snapshots.AsQueryable();
+
+            if (!string.IsNullOrEmpty(_selectedWorkload))
+                query = query.Where(s => s.Workload == _selectedWorkload);
+
+            if (!string.IsNullOrEmpty(_selectedType))
+                query = query.Where(s => s.UtcmResourceType == _selectedType);
+
+            if (_statusFilter == "changed")
+                query = query.Where(s => s.HasChangesFromPrevious == true);
+            else if (_statusFilter == "initial")
+                query = query.Where(s => s.HasChangesFromPrevious == null);
 
             _snapshots = await query
                 .OrderByDescending(s => s.CreatedAt)
@@ -177,6 +265,19 @@ else
     private async Task OnWorkloadFilterChanged(ChangeEventArgs e)
     {
         _selectedWorkload = e.Value?.ToString() ?? "";
+        _selectedType = ""; // Reset type filter when workload changes
+        await LoadData();
+    }
+
+    private async Task OnTypeFilterChanged(ChangeEventArgs e)
+    {
+        _selectedType = e.Value?.ToString() ?? "";
+        await LoadData();
+    }
+
+    private async Task OnStatusFilterChanged(ChangeEventArgs e)
+    {
+        _statusFilter = e.Value?.ToString() ?? "";
         await LoadData();
     }
 
@@ -196,9 +297,39 @@ else
         }
     }
 
-    private static string TruncateString(string value, int maxLength)
+    /// <summary>
+    /// Converts resource type to friendly name.
+    /// e.g., "microsoft.entra.conditionalAccessPolicy" -> "Conditional Access Policy"
+    /// </summary>
+    private static string GetFriendlyTypeName(string resourceType)
     {
-        if (string.IsNullOrEmpty(value)) return value;
-        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+        if (string.IsNullOrEmpty(resourceType)) return "-";
+
+        // Get last part after the last dot
+        var lastPart = resourceType.Split('.').LastOrDefault() ?? resourceType;
+
+        // Convert camelCase to Title Case with spaces
+        var result = System.Text.RegularExpressions.Regex.Replace(lastPart, "(\\B[A-Z])", " $1");
+        return char.ToUpper(result[0]) + result[1..];
+    }
+
+    /// <summary>
+    /// Cleans up display name by removing the type prefix.
+    /// UTCM display names are formatted as "{TypePrefix}-{ActualName}"
+    /// e.g., "AADConditionalAccessPolicy-Require MFA" -> "Require MFA"
+    /// </summary>
+    private static string CleanDisplayName(string displayName, string? resourceType)
+    {
+        if (string.IsNullOrEmpty(displayName)) return "-";
+
+        // UTCM format is always "{TypePrefix}-{ActualName}"
+        // Just take everything after the first dash
+        var dashIndex = displayName.IndexOf('-');
+        if (dashIndex > 0 && dashIndex < displayName.Length - 1)
+        {
+            return displayName[(dashIndex + 1)..];
+        }
+
+        return displayName;
     }
 }

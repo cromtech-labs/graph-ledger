@@ -1,13 +1,16 @@
+using System.Globalization;
 using System.Text.Json;
 using GraphLedger.Core.Diff;
 using GraphLedger.Core.Models;
 using GraphLedger.Core.Services;
 using GraphLedger.Core.Storage;
+using Microsoft.AspNetCore.Localization;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+builder.Services.AddLocalization();
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
@@ -84,6 +87,15 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
     app.UseHttpsRedirection();
 }
+
+// Configure localization to use browser's preferred culture
+var supportedCultures = new[] { "en-AU", "en-GB", "en-US", "de-DE", "fr-FR", "ja-JP", "zh-CN" };
+var localizationOptions = new RequestLocalizationOptions()
+    .SetDefaultCulture("en-US")
+    .AddSupportedCultures(supportedCultures)
+    .AddSupportedUICultures(supportedCultures);
+
+app.UseRequestLocalization(localizationOptions);
 
 app.UseStaticFiles();
 app.UseRouting();

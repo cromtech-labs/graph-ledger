@@ -85,3 +85,68 @@ code {
     font-size: 0.875em;
     color: #d63384;
 }
+
+/* QuickGrid Bootstrap styling */
+table.table thead th {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-weight: 600;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+/* Sortable column headers */
+table.table thead th button.col-title {
+    background: none;
+    border: none;
+    font: inherit;
+    font-weight: 600;
+    color: inherit;
+    padding: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+table.table thead th button.col-title:hover {
+    color: #0d6efd;
+}
+
+/* Sort indicator - default (unsorted) */
+table.table thead th button.col-title::after {
+    content: "⇅";
+    opacity: 0.3;
+    font-size: 0.7rem;
+}
+
+table.table thead th button.col-title:hover::after {
+    opacity: 0.6;
+}
+
+/* Ascending sort */
+table.table thead th[aria-sort="ascending"] {
+    background-color: #e7f1ff;
+}
+
+table.table thead th[aria-sort="ascending"] button.col-title::after {
+    content: "▲";
+    opacity: 1;
+    color: #0d6efd;
+}
+
+/* Descending sort */
+table.table thead th[aria-sort="descending"] {
+    background-color: #e7f1ff;
+}
+
+table.table thead th[aria-sort="descending"] button.col-title::after {
+    content: "▼";
+    opacity: 1;
+    color: #0d6efd;
+}
+
+/* Non-sortable columns - no indicator */
+table.table thead th:not([aria-sort]) .col-title:not(button)::after {
+    content: none;
+}

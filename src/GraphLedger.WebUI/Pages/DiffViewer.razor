@@ -51,7 +51,7 @@
                     null => " [initial]"
                 };
                 <option value="@snapshot.Id.ToString()">
-                    @snapshot.Id.ToString()[..8] - @TruncateString(snapshot.ResourceDisplayName ?? snapshot.Workload, 25) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))@statusLabel
+                    @snapshot.Id.ToString()[..8] - @TruncateString(snapshot.ResourceDisplayName ?? snapshot.Workload, 25) (@snapshot.CreatedAt.ToString("g"))@statusLabel
                 </option>
             }
         </select>
@@ -72,7 +72,7 @@
                     null => " [initial]"
                 };
                 <option value="@snapshot.Id.ToString()">
-                    @snapshot.Id.ToString()[..8] - @TruncateString(snapshot.ResourceDisplayName ?? snapshot.Workload, 25) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))@statusLabel
+                    @snapshot.Id.ToString()[..8] - @TruncateString(snapshot.ResourceDisplayName ?? snapshot.Workload, 25) (@snapshot.CreatedAt.ToString("g"))@statusLabel
                 </option>
             }
         </select>

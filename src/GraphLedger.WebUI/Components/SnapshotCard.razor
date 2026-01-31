@@ -9,7 +9,7 @@
         <h6 class="card-subtitle mb-2 text-muted">@Snapshot.Workload</h6>
         <p class="card-text">
             <small class="text-muted">
-                Created: @Snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC
+                Created: @Snapshot.CreatedAt.ToString("G") UTC
             </small>
         </p>
         @if (!string.IsNullOrEmpty(Snapshot.Description))

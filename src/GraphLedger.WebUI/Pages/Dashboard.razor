@@ -1,8 +1,13 @@
 @page "/"
 @rendermode InteractiveServer
 @inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
+@using System.Globalization
 
 <PageTitle>Dashboard - GraphLedger</PageTitle>
+
+<div class="alert alert-info">
+    <strong>Debug:</strong> Culture: @CultureInfo.CurrentCulture.Name | Date: @DateTime.Now.ToString("D")
+</div>
 
 <h1>Dashboard</h1>
 
@@ -55,11 +60,11 @@ else
             {
                 <a href="resources/@resource.Id" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
                     <div>
-                        <strong>@resource.DisplayName</strong>
+                        <strong>@CleanDisplayName(resource.DisplayName, resource.ResourceType)</strong>
                         <br/>
                         <small class="text-muted">
                             <span class="badge bg-secondary">@resource.Workload</span>
-                            @GetShortTypeName(resource.ResourceType)
+                            @GetFriendlyTypeName(resource.ResourceType)
                         </small>
                     </div>
                     <div class="text-end">
@@ -80,60 +85,51 @@ else
     }
     else
     {
-        <table class="table table-striped">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Resource</th>
-                    <th>Workload</th>
-                    <th>Created At</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var snapshot in _recentSnapshots)
+        <QuickGrid Items="@_recentSnapshots.AsQueryable()" Class="table table-striped">
+            <TemplateColumn Title="ID">
+                <code>@context.Id.ToString()[..8]</code>
+            </TemplateColumn>
+            <TemplateColumn Title="Workload" SortBy="@(GridSort<Snapshot>.ByAscending(s => s.Workload))">
+                <span class="badge bg-secondary">@context.Workload</span>
+            </TemplateColumn>
+            <TemplateColumn Title="Type" SortBy="@(GridSort<Snapshot>.ByAscending(s => s.UtcmResourceType))">
+                <small>@GetFriendlyTypeName(context.UtcmResourceType ?? "")</small>
+            </TemplateColumn>
+            <TemplateColumn Title="Resource" SortBy="@(GridSort<Snapshot>.ByAscending(s => s.ResourceDisplayName))">
+                @if (!string.IsNullOrEmpty(context.ResourceDisplayName))
                 {
-                    <tr>
-                        <td><code>@snapshot.Id.ToString()[..8]</code></td>
-                        <td>
-                            @if (!string.IsNullOrEmpty(snapshot.ResourceDisplayName))
-                            {
-                                <strong>@TruncateString(snapshot.ResourceDisplayName, 30)</strong>
-                                <br/><small class="text-muted">@GetShortTypeName(snapshot.UtcmResourceType ?? "")</small>
-                            }
-                            else
-                            {
-                                <span class="text-muted">-</span>
-                            }
-                        </td>
-                        <td><span class="badge bg-secondary">@snapshot.Workload</span></td>
-                        <td>@snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
-                        <td>
-                            @if (snapshot.HasChangesFromPrevious == true)
-                            {
-                                <span class="badge bg-warning text-dark">Changed</span>
-                            }
-                            else if (snapshot.HasChangesFromPrevious == false)
-                            {
-                                <span class="text-muted">No changes</span>
-                            }
-                            else
-                            {
-                                <span class="badge bg-info">Initial</span>
-                            }
-                        </td>
-                        <td>
-                            <a href="snapshots/@snapshot.Id" class="btn btn-sm btn-outline-primary">View</a>
-                            @if (snapshot.ResourceId.HasValue)
-                            {
-                                <a href="resources/@snapshot.ResourceId" class="btn btn-sm btn-outline-secondary">History</a>
-                            }
-                        </td>
-                    </tr>
+                    <strong>@CleanDisplayName(context.ResourceDisplayName, context.UtcmResourceType)</strong>
                 }
-            </tbody>
-        </table>
+                else
+                {
+                    <span class="text-muted">-</span>
+                }
+            </TemplateColumn>
+            <TemplateColumn Title="Status" SortBy="@(GridSort<Snapshot>.ByDescending(s => s.HasChangesFromPrevious))">
+                @if (context.HasChangesFromPrevious == true)
+                {
+                    <span class="badge bg-warning text-dark">Changed</span>
+                }
+                else if (context.HasChangesFromPrevious == false)
+                {
+                    <span class="text-muted">No changes</span>
+                }
+                else
+                {
+                    <span class="badge bg-info">Initial</span>
+                }
+            </TemplateColumn>
+            <TemplateColumn Title="Created At" SortBy="@(GridSort<Snapshot>.ByDescending(s => s.CreatedAt))">
+                <small>@context.CreatedAt.ToString("g")</small>
+            </TemplateColumn>
+            <TemplateColumn Title="Actions">
+                <a href="snapshots/@context.Id" class="btn btn-sm btn-outline-primary">View</a>
+                @if (context.ResourceId.HasValue)
+                {
+                    <a href="resources/@context.ResourceId" class="btn btn-sm btn-outline-secondary">History</a>
+                }
+            </TemplateColumn>
+        </QuickGrid>
     }
 }
 
@@ -185,6 +181,27 @@ else
         return parts.Length > 0 ? parts[^1] : resourceType;
     }
 
+    private static string GetFriendlyTypeName(string resourceType)
+    {
+        if (string.IsNullOrEmpty(resourceType)) return "";
+        var lastPart = resourceType.Split('.').LastOrDefault() ?? resourceType;
+        var result = System.Text.RegularExpressions.Regex.Replace(lastPart, "(\\B[A-Z])", " $1");
+        return char.ToUpper(result[0]) + result[1..];
+    }
+
+    private static string CleanDisplayName(string displayName, string? resourceType)
+    {
+        if (string.IsNullOrEmpty(displayName)) return "-";
+
+        var dashIndex = displayName.IndexOf('-');
+        if (dashIndex > 0 && dashIndex < displayName.Length - 1)
+        {
+            return displayName[(dashIndex + 1)..];
+        }
+
+        return displayName;
+    }
+
     private static string FormatTimeAgo(DateTime dateTime)
     {
         var elapsed = DateTime.UtcNow - dateTime;
@@ -196,6 +213,6 @@ else
         if (elapsed.TotalDays < 7)
             return $"{(int)elapsed.TotalDays}d ago";
 
-        return dateTime.ToString("MMM dd");
+        return dateTime.ToString("d");
     }
 }

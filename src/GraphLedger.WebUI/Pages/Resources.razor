@@ -68,63 +68,45 @@ else
             }
         </div>
 
-        <table class="table table-striped table-hover">
-            <thead>
-                <tr>
-                    <th style="width: 35%">Display Name</th>
-                    <th>Type</th>
-                    <th>Workload</th>
-                    <th class="text-center">Snapshots</th>
-                    <th class="text-center">Changes</th>
-                    <th>Last Changed</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var resource in _resources)
+        <QuickGrid Items="@_resources.AsQueryable()" Class="table table-striped table-hover">
+            <TemplateColumn Title="Workload" SortBy="@(GridSort<Resource>.ByAscending(r => r.Workload))">
+                <span class="badge bg-secondary">@context.Workload</span>
+            </TemplateColumn>
+            <TemplateColumn Title="Type" SortBy="@(GridSort<Resource>.ByAscending(r => r.ResourceType))">
+                <small>@GetFriendlyTypeName(context.ResourceType)</small>
+            </TemplateColumn>
+            <TemplateColumn Title="Resource" SortBy="@(GridSort<Resource>.ByAscending(r => CleanDisplayName(r.DisplayName, r.ResourceType)))">
+                <a href="resources/@context.Id" class="text-decoration-none">
+                    <strong>@CleanDisplayName(context.DisplayName, context.ResourceType)</strong>
+                </a>
+            </TemplateColumn>
+            <PropertyColumn Property="@(r => r.SnapshotCount)" Title="Snapshots" Sortable="true" Align="Align.Center" />
+            <TemplateColumn Title="Changes" SortBy="@(GridSort<Resource>.ByDescending(r => r.ChangeCount))" Align="Align.Center">
+                @if (context.ChangeCount > 1)
                 {
-                    <tr>
-                        <td>
-                            <a href="resources/@resource.Id" class="text-decoration-none">
-                                <strong>@TruncateString(resource.DisplayName, 45)</strong>
-                            </a>
-                        </td>
-                        <td>
-                            <code class="small">@GetShortTypeName(resource.ResourceType)</code>
-                        </td>
-                        <td>
-                            <span class="badge bg-secondary">@resource.Workload</span>
-                        </td>
-                        <td class="text-center">@resource.SnapshotCount</td>
-                        <td class="text-center">
-                            @if (resource.ChangeCount > 1)
-                            {
-                                <span class="badge bg-warning text-dark">@resource.ChangeCount</span>
-                            }
-                            else
-                            {
-                                <span class="text-muted">@resource.ChangeCount</span>
-                            }
-                        </td>
-                        <td>
-                            @if (resource.LastChangedAt.HasValue)
-                            {
-                                <span title="@resource.LastChangedAt.Value.ToString("yyyy-MM-dd HH:mm:ss") UTC">
-                                    @FormatTimeAgo(resource.LastChangedAt.Value)
-                                </span>
-                            }
-                            else
-                            {
-                                <span class="text-muted">Never</span>
-                            }
-                        </td>
-                        <td>
-                            <a href="resources/@resource.Id" class="btn btn-sm btn-outline-primary">History</a>
-                        </td>
-                    </tr>
+                    <span class="badge bg-warning text-dark">@context.ChangeCount</span>
                 }
-            </tbody>
-        </table>
+                else
+                {
+                    <span class="text-muted">@context.ChangeCount</span>
+                }
+            </TemplateColumn>
+            <TemplateColumn Title="Last Changed" SortBy="@(GridSort<Resource>.ByDescending(r => r.LastChangedAt))">
+                @if (context.LastChangedAt.HasValue)
+                {
+                    <span title="@context.LastChangedAt.Value.ToString("G") UTC">
+                        @FormatTimeAgo(context.LastChangedAt.Value)
+                    </span>
+                }
+                else
+                {
+                    <span class="text-muted">Never</span>
+                }
+            </TemplateColumn>
+            <TemplateColumn Title="Actions">
+                <a href="resources/@context.Id" class="btn btn-sm btn-outline-primary">History</a>
+            </TemplateColumn>
+        </QuickGrid>
     }
 }
 
@@ -212,6 +194,35 @@ else
         return parts.Length > 0 ? parts[^1] : resourceType;
     }
 
+    /// <summary>
+    /// Converts resource type to friendly name.
+    /// e.g., "microsoft.entra.conditionalAccessPolicy" -> "Conditional Access Policy"
+    /// </summary>
+    private static string GetFriendlyTypeName(string resourceType)
+    {
+        if (string.IsNullOrEmpty(resourceType)) return "-";
+        var lastPart = resourceType.Split('.').LastOrDefault() ?? resourceType;
+        var result = System.Text.RegularExpressions.Regex.Replace(lastPart, "(\\B[A-Z])", " $1");
+        return char.ToUpper(result[0]) + result[1..];
+    }
+
+    /// <summary>
+    /// Cleans up display name by removing the type prefix.
+    /// UTCM display names are formatted as "{TypePrefix}-{ActualName}"
+    /// </summary>
+    private static string CleanDisplayName(string displayName, string? resourceType)
+    {
+        if (string.IsNullOrEmpty(displayName)) return "-";
+
+        var dashIndex = displayName.IndexOf('-');
+        if (dashIndex > 0 && dashIndex < displayName.Length - 1)
+        {
+            return displayName[(dashIndex + 1)..];
+        }
+
+        return displayName;
+    }
+
     private static string FormatTimeAgo(DateTime dateTime)
     {
         var elapsed = DateTime.UtcNow - dateTime;
@@ -225,6 +236,6 @@ else
         if (elapsed.TotalDays < 30)
             return $"{(int)(elapsed.TotalDays / 7)}w ago";
 
-        return dateTime.ToString("yyyy-MM-dd");
+        return dateTime.ToString("d");
     }
 }
