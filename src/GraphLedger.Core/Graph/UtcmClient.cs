@@ -77,7 +77,8 @@ public class UtcmClient : IUtcmClient
     {
         await EnsureAuthenticatedAsync(ct);
 
-        var response = await _httpClient.GetAsync($"{BaseUrl}/configurationSnapshots/{jobId}", ct);
+        // REST path syntax for getting a specific job
+        var response = await _httpClient.GetAsync($"{BaseUrl}/configurationSnapshotJobs/{jobId}", ct);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<UtcmSnapshotJobResponse>(JsonOptions, ct)
@@ -123,11 +124,12 @@ public class UtcmClient : IUtcmClient
         var response = await _httpClient.GetAsync(job.ResourceLocation, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<ODataCollectionResponse<UtcmSnapshotResourceResponse>>(JsonOptions, ct);
+        // The resourceLocation returns a single snapshot entity with a resources array
+        var result = await response.Content.ReadFromJsonAsync<UtcmSnapshotDataResponse>(JsonOptions, ct);
 
-        if (result?.Value != null)
+        if (result?.Resources != null)
         {
-            job.SnapshotData = result.Value.Select(r => new UtcmSnapshotResource
+            job.SnapshotData = result.Resources.Select(r => new UtcmSnapshotResource
             {
                 DisplayName = r.DisplayName ?? string.Empty,
                 ResourceType = r.ResourceType ?? string.Empty,
@@ -402,6 +404,18 @@ public class UtcmClient : IUtcmClient
         public string? DisplayName { get; set; }
         public string? ResourceType { get; set; }
         public Dictionary<string, object?>? Properties { get; set; }
+    }
+
+    /// <summary>
+    /// Response from fetching snapshot data (the resourceLocation endpoint).
+    /// This is a single entity with a resources array, not an OData collection.
+    /// </summary>
+    private class UtcmSnapshotDataResponse
+    {
+        public string? Id { get; set; }
+        public string? DisplayName { get; set; }
+        public string? Description { get; set; }
+        public List<UtcmSnapshotResourceResponse>? Resources { get; set; }
     }
 
     private class UtcmMonitorResponse

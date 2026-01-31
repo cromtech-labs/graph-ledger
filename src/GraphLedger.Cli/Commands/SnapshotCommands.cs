@@ -101,7 +101,8 @@ public static class SnapshotCommands
                     targetResourceTypes = UtcmResourceTypeRegistry.GetResourceTypes("Entra");
                 }
 
-                var displayName = description ?? $"Snapshot_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
+                // UTCM only allows alphanumeric and spaces in displayName
+                var displayName = description ?? $"Snapshot {DateTime.UtcNow:yyyyMMdd HHmmss}";
 
                 TableFormatter.WriteInfo($"Creating UTCM snapshot with {targetResourceTypes.Count} resource types...");
 

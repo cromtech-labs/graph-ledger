@@ -114,7 +114,8 @@ public class SnapshotPollingJob : IJob
             return;
         }
 
-        var displayName = $"Scheduled_{workload}_{DateTime.UtcNow:yyyyMMdd_HHmmss}";
+        // UTCM only allows alphanumeric and spaces in displayName
+        var displayName = $"Scheduled {workload} {DateTime.UtcNow:yyyyMMdd HHmmss}";
 
         // Create and wait for UTCM snapshot job
         _logger.LogDebug("Creating UTCM snapshot job for {Workload}", workload);
