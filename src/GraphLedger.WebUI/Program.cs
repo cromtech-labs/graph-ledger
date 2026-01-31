@@ -1,6 +1,7 @@
 using System.Text.Json;
 using GraphLedger.Core.Diff;
 using GraphLedger.Core.Models;
+using GraphLedger.Core.Services;
 using GraphLedger.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -61,7 +62,9 @@ builder.Services.AddDbContextFactory<GraphLedgerDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath}"));
 
 // Register services
+builder.Services.AddSingleton<IConfigurationHashService, ConfigurationHashService>();
 builder.Services.AddScoped<ISnapshotRepository, SnapshotRepository>();
+builder.Services.AddScoped<IResourceTrackingService, ResourceTrackingService>();
 builder.Services.AddScoped<IDiffEngine, JsonDiffEngine>();
 
 var app = builder.Build();

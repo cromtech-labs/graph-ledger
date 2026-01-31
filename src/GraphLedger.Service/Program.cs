@@ -1,4 +1,5 @@
 using GraphLedger.Core.Models;
+using GraphLedger.Core.Services;
 using GraphLedger.Core.Storage;
 using GraphLedger.Service.Jobs;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,9 @@ if (!string.IsNullOrEmpty(dbDirectory) && !Directory.Exists(dbDirectory))
 
 builder.Services.AddDbContextFactory<GraphLedgerDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath}"));
+
+// Register services
+builder.Services.AddSingleton<IConfigurationHashService, ConfigurationHashService>();
 
 // Configure Quartz
 builder.Services.AddQuartz(q =>

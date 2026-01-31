@@ -1,0 +1,279 @@
+@page "/resources/{ResourceId}"
+@rendermode InteractiveServer
+@inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
+@inject IDiffEngine DiffEngine
+@inject NavigationManager Navigation
+
+<PageTitle>Resource History - GraphLedger</PageTitle>
+
+@if (_loading)
+{
+    <p><em>Loading...</em></p>
+}
+else if (_resource == null)
+{
+    <div class="alert alert-danger">Resource not found.</div>
+}
+else
+{
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="resources">Resources</a></li>
+            <li class="breadcrumb-item active">@TruncateString(_resource.DisplayName, 40)</li>
+        </ol>
+    </nav>
+
+    <div class="row mb-4">
+        <div class="col">
+            <h1>@_resource.DisplayName</h1>
+            <p class="text-muted mb-0">
+                <span class="badge bg-secondary">@_resource.Workload</span>
+                <code class="ms-2">@_resource.ResourceType</code>
+            </p>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Snapshots</h5>
+                    <p class="display-6 mb-0">@_resource.SnapshotCount</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Changes</h5>
+                    <p class="display-6 mb-0">@_resource.ChangeCount</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">First Seen</h5>
+                    <p class="h5 mb-0">@_resource.FirstSeenAt.ToString("MMM dd, yyyy")</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-muted">Last Changed</h5>
+                    <p class="h5 mb-0">
+                        @if (_resource.LastChangedAt.HasValue)
+                        {
+                            @FormatTimeAgo(_resource.LastChangedAt.Value)
+                        }
+                        else
+                        {
+                            <text>Never</text>
+                        }
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="showUnchanged" checked="@_showUnchanged" @onchange="OnShowUnchangedChanged">
+            <label class="form-check-label" for="showUnchanged">Show snapshots with no changes</label>
+        </div>
+    </div>
+
+    <h3>Timeline</h3>
+
+    @if (_snapshots.Count == 0)
+    {
+        <p class="text-muted">No snapshots found for this resource.</p>
+    }
+    else
+    {
+        <div class="timeline">
+            @foreach (var snapshot in _snapshots)
+            {
+                var changeClass = snapshot.HasChangesFromPrevious switch
+                {
+                    true => "border-warning",
+                    false => "border-secondary",
+                    null => "border-info"
+                };
+
+                var changeLabel = snapshot.HasChangesFromPrevious switch
+                {
+                    true => "CHANGED",
+                    false => "no changes",
+                    null => "initial"
+                };
+
+                var changeBadgeClass = snapshot.HasChangesFromPrevious switch
+                {
+                    true => "bg-warning text-dark",
+                    false => "bg-secondary",
+                    null => "bg-info"
+                };
+
+                <div class="card mb-3 border-start border-4 @changeClass">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>@snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</strong>
+                            <span class="badge @changeBadgeClass ms-2">@changeLabel</span>
+                        </div>
+                        <div>
+                            <code class="text-muted">@snapshot.Id.ToString()[..8]</code>
+                        </div>
+                    </div>
+
+                    @if (snapshot.HasChangesFromPrevious == true && _diffResults.TryGetValue(snapshot.Id, out var diff) && diff.HasChanges)
+                    {
+                        <div class="card-body">
+                            <h6>Changes from previous:</h6>
+                            <div class="bg-light p-2 rounded" style="max-height: 200px; overflow-y: auto;">
+                                @foreach (var change in diff.Changes.Take(10))
+                                {
+                                    var changeColor = change.Operation switch
+                                    {
+                                        DiffOperation.Add => "text-success",
+                                        DiffOperation.Remove => "text-danger",
+                                        DiffOperation.Replace => "text-warning",
+                                        _ => ""
+                                    };
+                                    <div class="@changeColor small font-monospace">@change</div>
+                                }
+                                @if (diff.Changes.Count > 10)
+                                {
+                                    <div class="text-muted small">... and @(diff.Changes.Count - 10) more changes</div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="card-footer">
+                        <a href="snapshots/@snapshot.Id" class="btn btn-sm btn-outline-primary">View Configuration</a>
+                        @if (snapshot.HasChangesFromPrevious == true && snapshot.PreviousSnapshotId.HasValue)
+                        {
+                            <a href="diff?left=@snapshot.PreviousSnapshotId&right=@snapshot.Id"
+                               class="btn btn-sm btn-outline-secondary ms-2">Full Diff</a>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (_totalSnapshotCount > _snapshots.Count)
+        {
+            <div class="text-center mt-3">
+                <button class="btn btn-outline-primary" @onclick="LoadMore">
+                    Load More (@(_totalSnapshotCount - _snapshots.Count) remaining)
+                </button>
+            </div>
+        }
+    }
+}
+
+@code {
+    [Parameter]
+    public string? ResourceId { get; set; }
+
+    private bool _loading = true;
+    private Resource? _resource;
+    private List<Snapshot> _snapshots = new();
+    private Dictionary<Guid, DiffResult> _diffResults = new();
+    private bool _showUnchanged = false;
+    private int _pageSize = 20;
+    private int _totalSnapshotCount;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        await LoadData();
+        _loading = false;
+    }
+
+    private async Task LoadData()
+    {
+        if (!Guid.TryParse(ResourceId, out var resourceId))
+        {
+            _resource = null;
+            return;
+        }
+
+        await using var context = await ContextFactory.CreateDbContextAsync();
+
+        _resource = await context.Resources
+            .FirstOrDefaultAsync(r => r.Id == resourceId);
+
+        if (_resource == null) return;
+
+        // Get total count
+        var query = context.Snapshots.Where(s => s.ResourceId == resourceId);
+        if (!_showUnchanged)
+            query = query.Where(s => s.HasChangesFromPrevious != false);
+
+        _totalSnapshotCount = await query.CountAsync();
+
+        // Load snapshots
+        _snapshots = await query
+            .OrderByDescending(s => s.CreatedAt)
+            .Take(_pageSize)
+            .ToListAsync();
+
+        // Compute diffs for changed snapshots
+        await ComputeDiffsAsync(context);
+    }
+
+    private async Task ComputeDiffsAsync(GraphLedgerDbContext context)
+    {
+        _diffResults.Clear();
+
+        foreach (var snapshot in _snapshots.Where(s => s.HasChangesFromPrevious == true && s.PreviousSnapshotId.HasValue))
+        {
+            var previousSnapshot = await context.Snapshots
+                .FirstOrDefaultAsync(s => s.Id == snapshot.PreviousSnapshotId);
+
+            if (previousSnapshot != null)
+            {
+                var diff = DiffEngine.Compare(previousSnapshot, snapshot);
+                _diffResults[snapshot.Id] = diff;
+            }
+        }
+    }
+
+    private async Task OnShowUnchangedChanged(ChangeEventArgs e)
+    {
+        _showUnchanged = e.Value is bool b && b;
+        _pageSize = 20; // Reset page size
+        await LoadData();
+    }
+
+    private async Task LoadMore()
+    {
+        _pageSize += 20;
+        await LoadData();
+    }
+
+    private static string TruncateString(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return "-";
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    private static string FormatTimeAgo(DateTime dateTime)
+    {
+        var elapsed = DateTime.UtcNow - dateTime;
+
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalHours < 24)
+            return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7)
+            return $"{(int)elapsed.TotalDays}d ago";
+        if (elapsed.TotalDays < 30)
+            return $"{(int)(elapsed.TotalDays / 7)}w ago";
+
+        return dateTime.ToString("MMM dd, yyyy");
+    }
+}

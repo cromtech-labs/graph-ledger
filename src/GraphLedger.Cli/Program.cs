@@ -11,9 +11,11 @@ public class Program
         {
             ConfigCommands.CreateConfigCommand(),
             SnapshotCommands.CreateSnapshotCommand(),
+            ResourceCommands.CreateResourceCommand(),
             MonitorCommands.CreateMonitorCommand(),
             DriftCommands.CreateDriftCommand(),
-            WorkloadCommands.CreateWorkloadCommand()
+            WorkloadCommands.CreateWorkloadCommand(),
+            AdminCommands.CreateAdminCommand()
         };
 
         rootCommand.Description = @"
@@ -43,9 +45,11 @@ Getting Started:
 Commands:
   config    - Manage configuration settings
   snapshot  - Take and manage configuration snapshots
+  resource  - Browse and view resource history
   monitor   - Create and manage UTCM drift monitors
   drift     - View drift detection results
   workload  - Explore available UTCM workloads and resource types
+  admin     - Administrative commands (migrations, backfill)
 ";
 
         return await rootCommand.InvokeAsync(args);

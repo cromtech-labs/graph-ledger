@@ -4,6 +4,7 @@ using GraphLedger.Core.Graph;
 using GraphLedger.Core.Graph.Auth;
 using GraphLedger.Core.Models;
 using GraphLedger.Core.Models.Utcm;
+using GraphLedger.Core.Services;
 using GraphLedger.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -18,15 +19,18 @@ public class SnapshotPollingJob : IJob
     private readonly ILogger<SnapshotPollingJob> _logger;
     private readonly IOptions<AppConfiguration> _config;
     private readonly IDbContextFactory<GraphLedgerDbContext> _contextFactory;
+    private readonly IConfigurationHashService _hashService;
 
     public SnapshotPollingJob(
         ILogger<SnapshotPollingJob> logger,
         IOptions<AppConfiguration> config,
-        IDbContextFactory<GraphLedgerDbContext> contextFactory)
+        IDbContextFactory<GraphLedgerDbContext> contextFactory,
+        IConfigurationHashService hashService)
     {
         _logger = logger;
         _config = config;
         _contextFactory = contextFactory;
+        _hashService = hashService;
     }
 
     public async Task Execute(IJobExecutionContext context)
@@ -49,7 +53,7 @@ public class SnapshotPollingJob : IJob
             var diffEngine = new JsonDiffEngine();
 
             await using var dbContext = await _contextFactory.CreateDbContextAsync(context.CancellationToken);
-            var snapshotRepository = new SnapshotRepository(dbContext);
+            var snapshotRepository = new SnapshotRepository(dbContext, _hashService);
 
             // Filter to valid UTCM workloads
             var utcmWorkloads = config.EnabledWorkloads

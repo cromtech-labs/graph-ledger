@@ -1,4 +1,5 @@
 using GraphLedger.Core.Models;
+using GraphLedger.Core.Services;
 using GraphLedger.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -17,7 +18,8 @@ public class SnapshotRepositoryTests : IDisposable
             .Options;
 
         _context = new GraphLedgerDbContext(options);
-        _repository = new SnapshotRepository(_context);
+        var hashService = new ConfigurationHashService();
+        _repository = new SnapshotRepository(_context, hashService);
     }
 
     public void Dispose()

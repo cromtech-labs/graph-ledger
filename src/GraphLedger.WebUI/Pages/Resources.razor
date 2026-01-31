@@ -1,0 +1,230 @@
+@page "/resources"
+@rendermode InteractiveServer
+@inject IDbContextFactory<GraphLedgerDbContext> ContextFactory
+
+<PageTitle>Resources - GraphLedger</PageTitle>
+
+<h1>Resources</h1>
+
+@if (_loading)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label for="workloadFilter" class="form-label">Workload</label>
+            <select class="form-select" id="workloadFilter" @onchange="OnWorkloadFilterChanged">
+                <option value="">All Workloads</option>
+                @foreach (var workload in _workloads)
+                {
+                    <option value="@workload" selected="@(_selectedWorkload == workload)">@workload</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="typeFilter" class="form-label">Resource Type</label>
+            <select class="form-select" id="typeFilter" @onchange="OnTypeFilterChanged">
+                <option value="">All Types</option>
+                @foreach (var type in _resourceTypes)
+                {
+                    <option value="@type" selected="@(_selectedType == type)">@GetShortTypeName(type)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="changedFilter" class="form-label">Changed</label>
+            <select class="form-select" id="changedFilter" @onchange="OnChangedFilterChanged">
+                <option value="" selected="@(_changedWithinDays == null)">Any time</option>
+                <option value="1" selected="@(_changedWithinDays == 1)">Last 24 hours</option>
+                <option value="7" selected="@(_changedWithinDays == 7)">Last 7 days</option>
+                <option value="30" selected="@(_changedWithinDays == 30)">Last 30 days</option>
+            </select>
+        </div>
+    </div>
+
+    @if (_resources.Count == 0)
+    {
+        <div class="alert alert-info">
+            <strong>No resources found.</strong>
+            @if (string.IsNullOrEmpty(_selectedWorkload) && string.IsNullOrEmpty(_selectedType) && !_changedWithinDays.HasValue)
+            {
+                <p class="mb-0">Run some snapshots first, then use <code>graphledger admin backfill-resources</code> to populate resource tracking.</p>
+            }
+            else
+            {
+                <p class="mb-0">Try adjusting your filters.</p>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="mb-2 text-muted">
+            Showing @_resources.Count resource(s)
+            @if (_changedWithinDays.HasValue)
+            {
+                <text> changed in the last @_changedWithinDays days</text>
+            }
+        </div>
+
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th style="width: 35%">Display Name</th>
+                    <th>Type</th>
+                    <th>Workload</th>
+                    <th class="text-center">Snapshots</th>
+                    <th class="text-center">Changes</th>
+                    <th>Last Changed</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var resource in _resources)
+                {
+                    <tr>
+                        <td>
+                            <a href="resources/@resource.Id" class="text-decoration-none">
+                                <strong>@TruncateString(resource.DisplayName, 45)</strong>
+                            </a>
+                        </td>
+                        <td>
+                            <code class="small">@GetShortTypeName(resource.ResourceType)</code>
+                        </td>
+                        <td>
+                            <span class="badge bg-secondary">@resource.Workload</span>
+                        </td>
+                        <td class="text-center">@resource.SnapshotCount</td>
+                        <td class="text-center">
+                            @if (resource.ChangeCount > 1)
+                            {
+                                <span class="badge bg-warning text-dark">@resource.ChangeCount</span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">@resource.ChangeCount</span>
+                            }
+                        </td>
+                        <td>
+                            @if (resource.LastChangedAt.HasValue)
+                            {
+                                <span title="@resource.LastChangedAt.Value.ToString("yyyy-MM-dd HH:mm:ss") UTC">
+                                    @FormatTimeAgo(resource.LastChangedAt.Value)
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="text-muted">Never</span>
+                            }
+                        </td>
+                        <td>
+                            <a href="resources/@resource.Id" class="btn btn-sm btn-outline-primary">History</a>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private bool _loading = true;
+    private List<Resource> _resources = new();
+    private List<string> _workloads = new();
+    private List<string> _resourceTypes = new();
+    private string _selectedWorkload = "";
+    private string _selectedType = "";
+    private int? _changedWithinDays = null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        _loading = false;
+    }
+
+    private async Task LoadData()
+    {
+        await using var context = await ContextFactory.CreateDbContextAsync();
+
+        // Load filter options
+        _workloads = await context.Resources
+            .Select(r => r.Workload)
+            .Distinct()
+            .OrderBy(w => w)
+            .ToListAsync();
+
+        _resourceTypes = await context.Resources
+            .Select(r => r.ResourceType)
+            .Distinct()
+            .OrderBy(t => t)
+            .ToListAsync();
+
+        // Build query
+        var query = context.Resources.AsQueryable();
+
+        if (!string.IsNullOrEmpty(_selectedWorkload))
+            query = query.Where(r => r.Workload == _selectedWorkload);
+
+        if (!string.IsNullOrEmpty(_selectedType))
+            query = query.Where(r => r.ResourceType == _selectedType);
+
+        if (_changedWithinDays.HasValue)
+        {
+            var cutoff = DateTime.UtcNow.AddDays(-_changedWithinDays.Value);
+            query = query.Where(r => r.LastChangedAt >= cutoff);
+        }
+
+        _resources = await query
+            .OrderByDescending(r => r.LastChangedAt ?? r.FirstSeenAt)
+            .Take(100)
+            .ToListAsync();
+    }
+
+    private async Task OnWorkloadFilterChanged(ChangeEventArgs e)
+    {
+        _selectedWorkload = e.Value?.ToString() ?? "";
+        await LoadData();
+    }
+
+    private async Task OnTypeFilterChanged(ChangeEventArgs e)
+    {
+        _selectedType = e.Value?.ToString() ?? "";
+        await LoadData();
+    }
+
+    private async Task OnChangedFilterChanged(ChangeEventArgs e)
+    {
+        var value = e.Value?.ToString();
+        _changedWithinDays = string.IsNullOrEmpty(value) ? null : int.Parse(value);
+        await LoadData();
+    }
+
+    private static string TruncateString(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return "-";
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    private static string GetShortTypeName(string resourceType)
+    {
+        var parts = resourceType.Split('.');
+        return parts.Length > 0 ? parts[^1] : resourceType;
+    }
+
+    private static string FormatTimeAgo(DateTime dateTime)
+    {
+        var elapsed = DateTime.UtcNow - dateTime;
+
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalHours < 24)
+            return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7)
+            return $"{(int)elapsed.TotalDays}d ago";
+        if (elapsed.TotalDays < 30)
+            return $"{(int)(elapsed.TotalDays / 7)}w ago";
+
+        return dateTime.ToString("yyyy-MM-dd");
+    }
+}

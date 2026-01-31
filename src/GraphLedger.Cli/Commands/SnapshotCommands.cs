@@ -6,6 +6,7 @@ using GraphLedger.Core.Graph;
 using GraphLedger.Core.Graph.Auth;
 using GraphLedger.Core.Models;
 using GraphLedger.Core.Models.Utcm;
+using GraphLedger.Core.Services;
 using GraphLedger.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -122,7 +123,7 @@ public static class SnapshotCommands
 
                 using var context = CreateDbContext(config);
                 await context.Database.EnsureCreatedAsync();
-                var repository = new SnapshotRepository(context);
+                var repository = CreateRepository(context);
 
                 // Store each resource as a separate snapshot
                 if (completedJob.SnapshotData != null && completedJob.SnapshotData.Count > 0)
@@ -200,7 +201,7 @@ public static class SnapshotCommands
                     return;
                 }
 
-                var repository = new SnapshotRepository(context);
+                var repository = CreateRepository(context);
 
                 IReadOnlyList<Snapshot> snapshots;
                 if (!string.IsNullOrEmpty(resourceType))
@@ -269,7 +270,7 @@ public static class SnapshotCommands
             {
                 var config = LoadAppConfiguration();
                 using var context = CreateDbContext(config);
-                var repository = new SnapshotRepository(context);
+                var repository = CreateRepository(context);
 
                 var snapshot1 = await FindSnapshotByPartialId(repository, id1);
                 var snapshot2 = await FindSnapshotByPartialId(repository, id2);
@@ -354,7 +355,7 @@ public static class SnapshotCommands
             {
                 var config = LoadAppConfiguration();
                 using var context = CreateDbContext(config);
-                var repository = new SnapshotRepository(context);
+                var repository = CreateRepository(context);
 
                 var snapshot = await FindSnapshotByPartialId(repository, id);
 
@@ -416,7 +417,7 @@ public static class SnapshotCommands
             {
                 var config = LoadAppConfiguration();
                 using var context = CreateDbContext(config);
-                var repository = new SnapshotRepository(context);
+                var repository = CreateRepository(context);
 
                 var snapshot = await FindSnapshotByPartialId(repository, id);
 
@@ -510,5 +511,11 @@ public static class SnapshotCommands
         optionsBuilder.UseSqlite($"Data Source={config.Storage.DatabasePath}");
 
         return new GraphLedgerDbContext(optionsBuilder.Options);
+    }
+
+    private static SnapshotRepository CreateRepository(GraphLedgerDbContext context)
+    {
+        var hashService = new ConfigurationHashService();
+        return new SnapshotRepository(context, hashService);
     }
 }

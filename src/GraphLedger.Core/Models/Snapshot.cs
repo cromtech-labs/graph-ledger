@@ -32,6 +32,38 @@ public class Snapshot
     /// Friendly display name from UTCM for the resource.
     /// </summary>
     public string? ResourceDisplayName { get; set; }
+
+    // ========== Resource Tracking Fields ==========
+
+    /// <summary>
+    /// Link to the tracked resource.
+    /// </summary>
+    public Guid? ResourceId { get; set; }
+    public Resource? Resource { get; set; }
+
+    /// <summary>
+    /// The Graph API ID extracted from the configuration JSON.
+    /// Used to match snapshots to resources.
+    /// </summary>
+    public string? ExternalId { get; set; }
+
+    /// <summary>
+    /// SHA256 hash of normalized ConfigurationJson for quick equality checks.
+    /// Two snapshots with the same hash are identical.
+    /// </summary>
+    public string? ConfigurationHash { get; set; }
+
+    /// <summary>
+    /// True if this snapshot's configuration differs from the previous snapshot
+    /// of the same resource. Null for first snapshot or unknown.
+    /// </summary>
+    public bool? HasChangesFromPrevious { get; set; }
+
+    /// <summary>
+    /// Reference to the previous snapshot of the same resource (if any)
+    /// </summary>
+    public Guid? PreviousSnapshotId { get; set; }
+    public Snapshot? PreviousSnapshot { get; set; }
 }
 
 public enum SnapshotSource

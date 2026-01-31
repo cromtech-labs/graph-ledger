@@ -9,14 +9,49 @@
 <h1>Diff Viewer</h1>
 
 <div class="row mb-4">
+    <div class="col-md-4">
+        <label for="resourceTypeFilter" class="form-label">1. Select Resource Type</label>
+        <select class="form-select" id="resourceTypeFilter" value="@_selectedResourceType" @onchange="OnResourceTypeChanged">
+            <option value="">All Types</option>
+            @foreach (var type in _resourceTypes)
+            {
+                <option value="@type">@GetShortTypeName(type)</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-4">
+        <label for="resourceFilter" class="form-label">2. Select Resource</label>
+        <select class="form-select" id="resourceFilter" value="@_selectedResourceId" @onchange="OnResourceChanged" disabled="@string.IsNullOrEmpty(_selectedResourceType)">
+            <option value="">All Resources</option>
+            @foreach (var resource in _filteredResources)
+            {
+                <option value="@resource.Id.ToString()">@TruncateString(resource.DisplayName, 40)</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-4 d-flex align-items-end">
+        @if (!string.IsNullOrEmpty(_selectedResourceId))
+        {
+            <a href="resources/@_selectedResourceId" class="btn btn-outline-secondary">View History</a>
+        }
+    </div>
+</div>
+
+<div class="row mb-4">
     <div class="col-md-5">
         <label for="leftSnapshot" class="form-label">Left Snapshot (Older)</label>
         <select class="form-select" id="leftSnapshot" value="@_leftSnapshotId" @onchange="OnLeftSnapshotChanged">
             <option value="">Select snapshot...</option>
-            @foreach (var snapshot in _snapshots)
+            @foreach (var snapshot in _filteredSnapshots)
             {
+                var statusLabel = snapshot.HasChangesFromPrevious switch
+                {
+                    true => " [CHANGED]",
+                    false => "",
+                    null => " [initial]"
+                };
                 <option value="@snapshot.Id.ToString()">
-                    @snapshot.Id.ToString()[..8] - @(!string.IsNullOrEmpty(snapshot.ResourceDisplayName) ? snapshot.ResourceDisplayName : snapshot.Workload) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
+                    @snapshot.Id.ToString()[..8] - @TruncateString(snapshot.ResourceDisplayName ?? snapshot.Workload, 25) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))@statusLabel
                 </option>
             }
         </select>
@@ -28,10 +63,16 @@
         <label for="rightSnapshot" class="form-label">Right Snapshot (Newer)</label>
         <select class="form-select" id="rightSnapshot" value="@_rightSnapshotId" @onchange="OnRightSnapshotChanged">
             <option value="">Select snapshot...</option>
-            @foreach (var snapshot in _snapshots)
+            @foreach (var snapshot in _filteredSnapshots)
             {
+                var statusLabel = snapshot.HasChangesFromPrevious switch
+                {
+                    true => " [CHANGED]",
+                    false => "",
+                    null => " [initial]"
+                };
                 <option value="@snapshot.Id.ToString()">
-                    @snapshot.Id.ToString()[..8] - @(!string.IsNullOrEmpty(snapshot.ResourceDisplayName) ? snapshot.ResourceDisplayName : snapshot.Workload) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))
+                    @snapshot.Id.ToString()[..8] - @TruncateString(snapshot.ResourceDisplayName ?? snapshot.Workload, 25) (@snapshot.CreatedAt.ToString("MM/dd HH:mm"))@statusLabel
                 </option>
             }
         </select>
@@ -50,6 +91,13 @@
             <text>Compare Snapshots</text>
         }
     </button>
+
+    @if (!string.IsNullOrEmpty(_selectedResourceId) && _filteredSnapshots.Count >= 2)
+    {
+        <button class="btn btn-outline-secondary ms-2" @onclick="CompareLatestToPrevious">
+            Compare Latest to Previous
+        </button>
+    }
 </div>
 
 @if (!string.IsNullOrEmpty(_errorMessage))
@@ -84,7 +132,12 @@ else if (_diffResult != null)
 }
 
 @code {
-    private List<Snapshot> _snapshots = new();
+    private List<Snapshot> _allSnapshots = new();
+    private List<Snapshot> _filteredSnapshots = new();
+    private List<string> _resourceTypes = new();
+    private List<Resource> _filteredResources = new();
+    private string _selectedResourceType = "";
+    private string _selectedResourceId = "";
     private string _leftSnapshotId = "";
     private string _rightSnapshotId = "";
     private bool _comparing;
@@ -98,10 +151,22 @@ else if (_diffResult != null)
     protected override async Task OnInitializedAsync()
     {
         await using var context = await ContextFactory.CreateDbContextAsync();
-        _snapshots = await context.Snapshots
-            .OrderByDescending(s => s.CreatedAt)
-            .Take(100)
+
+        // Load all resource types
+        _resourceTypes = await context.Snapshots
+            .Where(s => s.UtcmResourceType != null)
+            .Select(s => s.UtcmResourceType!)
+            .Distinct()
+            .OrderBy(t => t)
             .ToListAsync();
+
+        // Load all snapshots
+        _allSnapshots = await context.Snapshots
+            .OrderByDescending(s => s.CreatedAt)
+            .Take(200)
+            .ToListAsync();
+
+        _filteredSnapshots = _allSnapshots;
 
         // Check for query parameters
         var uri = new Uri(Navigation.Uri);
@@ -113,6 +178,74 @@ else if (_diffResult != null)
         if (query["right"] != null)
         {
             _rightSnapshotId = query["right"]!;
+        }
+
+        // If we have a left snapshot, try to infer the resource type
+        if (!string.IsNullOrEmpty(_leftSnapshotId) && Guid.TryParse(_leftSnapshotId, out var leftGuid))
+        {
+            var leftSnapshot = _allSnapshots.FirstOrDefault(s => s.Id == leftGuid);
+            if (leftSnapshot?.UtcmResourceType != null)
+            {
+                _selectedResourceType = leftSnapshot.UtcmResourceType;
+                await ApplyFilters();
+            }
+        }
+    }
+
+    private async Task OnResourceTypeChanged(ChangeEventArgs e)
+    {
+        _selectedResourceType = e.Value?.ToString() ?? "";
+        _selectedResourceId = "";
+        _leftSnapshotId = "";
+        _rightSnapshotId = "";
+        _diffResult = null;
+        _errorMessage = null;
+        await ApplyFilters();
+    }
+
+    private async Task OnResourceChanged(ChangeEventArgs e)
+    {
+        _selectedResourceId = e.Value?.ToString() ?? "";
+        _leftSnapshotId = "";
+        _rightSnapshotId = "";
+        _diffResult = null;
+        _errorMessage = null;
+        await ApplyFilters();
+    }
+
+    private async Task ApplyFilters()
+    {
+        await using var context = await ContextFactory.CreateDbContextAsync();
+
+        // Filter resources by type
+        if (!string.IsNullOrEmpty(_selectedResourceType))
+        {
+            _filteredResources = await context.Resources
+                .Where(r => r.ResourceType == _selectedResourceType)
+                .OrderBy(r => r.DisplayName)
+                .ToListAsync();
+        }
+        else
+        {
+            _filteredResources = new();
+        }
+
+        // Filter snapshots
+        if (!string.IsNullOrEmpty(_selectedResourceId) && Guid.TryParse(_selectedResourceId, out var resourceId))
+        {
+            _filteredSnapshots = _allSnapshots
+                .Where(s => s.ResourceId == resourceId)
+                .ToList();
+        }
+        else if (!string.IsNullOrEmpty(_selectedResourceType))
+        {
+            _filteredSnapshots = _allSnapshots
+                .Where(s => s.UtcmResourceType == _selectedResourceType)
+                .ToList();
+        }
+        else
+        {
+            _filteredSnapshots = _allSnapshots;
         }
     }
 
@@ -128,6 +261,16 @@ else if (_diffResult != null)
         _rightSnapshotId = e.Value?.ToString() ?? "";
         _diffResult = null;
         _errorMessage = null;
+    }
+
+    private void CompareLatestToPrevious()
+    {
+        if (_filteredSnapshots.Count >= 2)
+        {
+            _rightSnapshotId = _filteredSnapshots[0].Id.ToString();
+            _leftSnapshotId = _filteredSnapshots[1].Id.ToString();
+            _ = CompareSnapshots();
+        }
     }
 
     private async Task CompareSnapshots()
@@ -179,5 +322,17 @@ else if (_diffResult != null)
             _comparing = false;
             StateHasChanged();
         }
+    }
+
+    private static string TruncateString(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return "-";
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    private static string GetShortTypeName(string resourceType)
+    {
+        var parts = resourceType.Split('.');
+        return parts.Length > 0 ? parts[^1] : resourceType;
     }
 }

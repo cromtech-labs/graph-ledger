@@ -13,7 +13,7 @@
 else
 {
     <div class="row">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card mb-4">
                 <div class="card-body">
                     <h5 class="card-title">Total Snapshots</h5>
@@ -21,23 +21,56 @@ else
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card mb-4">
                 <div class="card-body">
-                    <h5 class="card-title">Workloads Tracked</h5>
+                    <h5 class="card-title">Resources Tracked</h5>
+                    <p class="card-text display-4">@_totalResources</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Changed This Week</h5>
+                    <p class="card-text display-4">@_changedThisWeek</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card mb-4">
+                <div class="card-body">
+                    <h5 class="card-title">Workloads</h5>
                     <p class="card-text display-4">@_workloadCount</p>
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
-            <div class="card mb-4">
-                <div class="card-body">
-                    <h5 class="card-title">Recent Drifts</h5>
-                    <p class="card-text display-4">@_recentDrifts</p>
-                </div>
-            </div>
-        </div>
     </div>
+
+    @if (_recentChanges.Count > 0)
+    {
+        <h2>Recent Changes <a href="resources?changed-since=7" class="btn btn-sm btn-outline-secondary float-end">View All</a></h2>
+        <div class="list-group mb-4">
+            @foreach (var resource in _recentChanges)
+            {
+                <a href="resources/@resource.Id" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>@resource.DisplayName</strong>
+                        <br/>
+                        <small class="text-muted">
+                            <span class="badge bg-secondary">@resource.Workload</span>
+                            @GetShortTypeName(resource.ResourceType)
+                        </small>
+                    </div>
+                    <div class="text-end">
+                        <span class="badge bg-warning text-dark">Changed</span>
+                        <br/>
+                        <small class="text-muted">@FormatTimeAgo(resource.LastChangedAt!.Value)</small>
+                    </div>
+                </a>
+            }
+        </div>
+    }
 
     <h2>Recent Snapshots</h2>
     @if (_recentSnapshots.Count == 0)
@@ -54,6 +87,7 @@ else
                     <th>Resource</th>
                     <th>Workload</th>
                     <th>Created At</th>
+                    <th>Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
@@ -65,8 +99,8 @@ else
                         <td>
                             @if (!string.IsNullOrEmpty(snapshot.ResourceDisplayName))
                             {
-                                <strong>@snapshot.ResourceDisplayName</strong>
-                                <br/><small class="text-muted">@snapshot.UtcmResourceType</small>
+                                <strong>@TruncateString(snapshot.ResourceDisplayName, 30)</strong>
+                                <br/><small class="text-muted">@GetShortTypeName(snapshot.UtcmResourceType ?? "")</small>
                             }
                             else
                             {
@@ -76,8 +110,25 @@ else
                         <td><span class="badge bg-secondary">@snapshot.Workload</span></td>
                         <td>@snapshot.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss") UTC</td>
                         <td>
+                            @if (snapshot.HasChangesFromPrevious == true)
+                            {
+                                <span class="badge bg-warning text-dark">Changed</span>
+                            }
+                            else if (snapshot.HasChangesFromPrevious == false)
+                            {
+                                <span class="text-muted">No changes</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-info">Initial</span>
+                            }
+                        </td>
+                        <td>
                             <a href="snapshots/@snapshot.Id" class="btn btn-sm btn-outline-primary">View</a>
-                            <a href="diff?left=@snapshot.Id" class="btn btn-sm btn-outline-secondary">Compare</a>
+                            @if (snapshot.ResourceId.HasValue)
+                            {
+                                <a href="resources/@snapshot.ResourceId" class="btn btn-sm btn-outline-secondary">History</a>
+                            }
                         </td>
                     </tr>
                 }
@@ -89,19 +140,29 @@ else
 @code {
     private bool _loading = true;
     private int _totalSnapshots;
+    private int _totalResources;
+    private int _changedThisWeek;
     private int _workloadCount;
-    private int _recentDrifts;
     private List<Snapshot> _recentSnapshots = new();
+    private List<Resource> _recentChanges = new();
 
     protected override async Task OnInitializedAsync()
     {
         await using var context = await ContextFactory.CreateDbContextAsync();
 
         _totalSnapshots = await context.Snapshots.CountAsync();
-        _workloadCount = await context.Snapshots.Select(s => s.Workload).Distinct().CountAsync();
-        _recentDrifts = await context.DriftRecords
-            .Where(d => d.DetectedAt > DateTime.UtcNow.AddDays(-7))
-            .CountAsync();
+        _totalResources = await context.Resources.CountAsync();
+        _workloadCount = await context.Resources.Select(r => r.Workload).Distinct().CountAsync();
+
+        var weekAgo = DateTime.UtcNow.AddDays(-7);
+        _changedThisWeek = await context.Resources
+            .CountAsync(r => r.LastChangedAt >= weekAgo);
+
+        _recentChanges = await context.Resources
+            .Where(r => r.LastChangedAt >= weekAgo)
+            .OrderByDescending(r => r.LastChangedAt)
+            .Take(5)
+            .ToListAsync();
 
         _recentSnapshots = await context.Snapshots
             .OrderByDescending(s => s.CreatedAt)
@@ -109,5 +170,32 @@ else
             .ToListAsync();
 
         _loading = false;
+    }
+
+    private static string TruncateString(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value)) return "-";
+        return value.Length <= maxLength ? value : value[..(maxLength - 3)] + "...";
+    }
+
+    private static string GetShortTypeName(string resourceType)
+    {
+        if (string.IsNullOrEmpty(resourceType)) return "";
+        var parts = resourceType.Split('.');
+        return parts.Length > 0 ? parts[^1] : resourceType;
+    }
+
+    private static string FormatTimeAgo(DateTime dateTime)
+    {
+        var elapsed = DateTime.UtcNow - dateTime;
+
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalHours < 24)
+            return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7)
+            return $"{(int)elapsed.TotalDays}d ago";
+
+        return dateTime.ToString("MMM dd");
     }
 }
